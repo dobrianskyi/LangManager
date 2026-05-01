@@ -1,0 +1,27 @@
+# Build trees and generated CMake files
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Local test/runtime state
+.test-install/
+.phpmanager-headless/
+
+# Release/package artifacts
+dist/
+release/
+pkg/
+*.pkg.tar*
+*.src.tar*
+*.tar.gz
+*.tar.xz
+*.tar.zst
+
+# Editor/IDE state
+*.user
+*.autosave
+*.swp
+*~

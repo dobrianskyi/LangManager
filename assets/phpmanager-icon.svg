@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 128 128">
+  <rect width="128" height="128" fill="none"/>
+  <rect x="18" y="34" width="88" height="62" rx="28" fill="#5f4cb2"/>
+  <circle cx="93" cy="41" r="17" fill="#735fcd"/>
+  <circle cx="29" cy="57" r="15" fill="#735fcd"/>
+  <path d="M96 54 C122 58 116 88 96 82 C108 80 110 64 94 64 Z" fill="#5f4cb2"/>
+  <circle cx="94.5" cy="39.5" r="3.5" fill="#f5f5ff"/>
+  <text x="60" y="81" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#ffffff">PHP</text>
+</svg>

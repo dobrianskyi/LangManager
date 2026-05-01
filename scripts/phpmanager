@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+install_base="${PHPMANAGER_INSTALL_BASE:-$HOME/.local}"
+
+usage() {
+    cat <<'USAGE'
+phpmanager - small CLI companion for PHPManager
+
+Usage:
+  phpmanager list
+  phpmanager use <major.minor|version>
+  phpmanager current
+  phpmanager env
+
+Options:
+  --base <path>   Install base, defaults to ~/.local or PHPMANAGER_INSTALL_BASE.
+
+Examples:
+  phpmanager list
+  phpmanager use 8.2
+  phpmanager use 8.2.30
+  eval "$(phpmanager env)"
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --base)
+            install_base="${2:-}"
+            shift 2
+            ;;
+        --base=*)
+            install_base="${1#--base=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+cmd="${1:-list}"
+shift || true
+
+registry="$install_base/php/installed.json"
+bin_dir="$install_base/bin"
+
+need_registry() {
+    if [[ ! -f "$registry" ]]; then
+        echo "No PHPManager registry: $registry" >&2
+        exit 1
+    fi
+}
+
+json_query() {
+    python3 - "$registry" "$@" <<'PY'
+import json
+import sys
+
+registry_path = sys.argv[1]
+mode = sys.argv[2]
+arg = sys.argv[3] if len(sys.argv) > 3 else ""
+
+with open(registry_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+versions = [v for v in data.get("versions", []) if v.get("status") == "ready"]
+default_path = data.get("defaultInstallPath", "")
+
+if mode == "list":
+    if not versions:
+        print("No installed PHP versions")
+        sys.exit(0)
+    for item in versions:
+        marker = "*" if item.get("installPath") == default_path else " "
+        print(f"{marker} PHP {item.get('version')}  {item.get('installPath')}")
+elif mode == "find":
+    matches = [
+        item for item in versions
+        if item.get("version") == arg or item.get("version", "").startswith(arg + ".")
+    ]
+    if not matches:
+        sys.exit(2)
+    matches.sort(key=lambda item: [int(part) for part in item.get("version", "0").split(".") if part.isdigit()], reverse=True)
+    print(json.dumps(matches[0]))
+elif mode == "current":
+    for item in versions:
+        if item.get("installPath") == default_path:
+            print(json.dumps(item))
+            break
+PY
+}
+
+link_tool() {
+    local target="$1"
+    local link="$2"
+
+    [[ -f "$target" ]] || return 0
+    mkdir -p "$bin_dir"
+    if [[ -e "$link" && ! -L "$link" ]]; then
+        echo "Refusing to overwrite non-symlink: $link" >&2
+        exit 1
+    fi
+    ln -sfn "$target" "$link"
+}
+
+case "$cmd" in
+    list)
+        need_registry
+        json_query list
+        ;;
+    current)
+        need_registry
+        current_json="$(json_query current || true)"
+        if [[ -z "$current_json" ]]; then
+            echo "No default PHP selected"
+            exit 1
+        fi
+        php_binary="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("phpBinary",""))' "$current_json")"
+        echo "$bin_dir/php -> $(readlink -f "$bin_dir/php" 2>/dev/null || echo "$php_binary")"
+        "$php_binary" -v | sed -n '1,3p'
+        ;;
+    use)
+        need_registry
+        wanted="${1:-}"
+        if [[ -z "$wanted" ]]; then
+            echo "Usage: phpmanager use <major.minor|version>" >&2
+            exit 1
+        fi
+        manifest="$(json_query find "$wanted" || true)"
+        if [[ -z "$manifest" ]]; then
+            echo "No installed PHP version matches: $wanted" >&2
+            exit 1
+        fi
+        version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["version"])' "$manifest")"
+        install_path="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["installPath"])' "$manifest")"
+
+        link_tool "$install_path/bin/php" "$bin_dir/php"
+        link_tool "$install_path/bin/phpize" "$bin_dir/phpize"
+        link_tool "$install_path/bin/php-config" "$bin_dir/php-config"
+        link_tool "$install_path/bin/pecl" "$bin_dir/pecl"
+        link_tool "$install_path/bin/pear" "$bin_dir/pear"
+
+        python3 - "$registry" "$version" "$install_path" "$bin_dir" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, version, install_path, bin_dir = sys.argv[1:5]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+data["schemaVersion"] = 1
+data["defaultVersion"] = version
+data["defaultInstallPath"] = install_path
+data["defaultPhpBinary"] = f"{install_path}/bin/php"
+data["defaultBinPath"] = bin_dir
+data["defaultSetAtUtc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=4)
+    fh.write("\n")
+PY
+        echo "PHP $version selected"
+        echo "$bin_dir/php -> $(readlink -f "$bin_dir/php")"
+        ;;
+    env)
+        printf 'export PHPMANAGER_INSTALL_BASE=%q\n' "$install_base"
+        printf 'export PATH=%q:$PATH\n' "$bin_dir"
+        ;;
+    *)
+        usage >&2
+        exit 1
+        ;;
+esac

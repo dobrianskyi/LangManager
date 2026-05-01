@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PHPManager
+Comment=Build and manage local PHP CLI versions
+Exec=PHPManager
+Icon=phpmanager
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true
+StartupWMClass=PHPManager

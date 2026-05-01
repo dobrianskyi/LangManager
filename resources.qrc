@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/">
+        <file>assets/phpmanager-icon.svg</file>
+        <file>assets/icons/phpmanager-16.png</file>
+        <file>assets/icons/phpmanager-32.png</file>
+        <file>assets/icons/phpmanager-48.png</file>
+        <file>assets/icons/phpmanager-64.png</file>
+        <file>assets/icons/phpmanager-128.png</file>
+        <file>assets/icons/phpmanager-256.png</file>
+        <file>assets/icons/phpmanager-512.png</file>
+    </qresource>
+</RCC>
