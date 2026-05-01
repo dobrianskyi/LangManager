@@ -13,12 +13,12 @@ source=("${pkgname}-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-    cmake -S "PHPManager-${pkgver}" -B build -G Ninja \
+    cmake -S "${srcdir}/PHPManager-${pkgver}" -B "${srcdir}/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr
-    cmake --build build
+    cmake --build "${srcdir}/build"
 }
 
 package() {
-    DESTDIR="${pkgdir}" cmake --install build
+    DESTDIR="${pkgdir}" cmake --install "${srcdir}/build"
 }
