@@ -18,27 +18,38 @@ namespace {
 QIcon createAppIcon()
 {
     QIcon icon;
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-16.png"), QSize(16, 16));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-32.png"), QSize(32, 32));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-48.png"), QSize(48, 48));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-64.png"), QSize(64, 64));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-128.png"), QSize(128, 128));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-256.png"), QSize(256, 256));
-    icon.addFile(QStringLiteral(":/assets/icons/phpmanager-512.png"), QSize(512, 512));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-16.png"), QSize(16, 16));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-32.png"), QSize(32, 32));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-48.png"), QSize(48, 48));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-64.png"), QSize(64, 64));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-128.png"), QSize(128, 128));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-256.png"), QSize(256, 256));
+    icon.addFile(QStringLiteral(":/assets/icons/langmanager-512.png"), QSize(512, 512));
     return icon;
 }
+
+#if defined(Q_OS_LINUX)
+void clearInheritedDesktopHints()
+{
+    qunsetenv("BAMF_DESKTOP_FILE_HINT");
+    qunsetenv("CHROME_DESKTOP");
+    qunsetenv("DESKTOP_STARTUP_ID");
+    qunsetenv("GIO_LAUNCHED_DESKTOP_FILE");
+    qunsetenv("GIO_LAUNCHED_DESKTOP_FILE_PID");
+}
+#endif
 
 int runHeadlessBuild(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("PHPManager"));
+    QCoreApplication::setApplicationName(QStringLiteral("LangManager"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Headless PHPManager build runner"));
+    parser.setApplicationDescription(QStringLiteral("Headless LangManager build runner"));
     parser.addHelpOption();
     parser.addOption({QStringLiteral("headless-build"), QStringLiteral("Run a build without opening the GUI.")});
     parser.addOption({QStringLiteral("php-version"), QStringLiteral("PHP version to build."), QStringLiteral("version"), QStringLiteral("8.4.20")});
-    parser.addOption({QStringLiteral("install-base"), QStringLiteral("Install base directory."), QStringLiteral("path"), QDir::current().filePath(QStringLiteral(".phpmanager-headless"))});
+    parser.addOption({QStringLiteral("install-base"), QStringLiteral("Install base directory."), QStringLiteral("path"), QDir::current().filePath(QStringLiteral(".langmanager-headless"))});
     parser.addOption({QStringLiteral("modules"), QStringLiteral("Comma-separated module list. Use 'default' for the default GUI profile."), QStringLiteral("list"), QStringLiteral("default")});
     parser.addOption({QStringLiteral("dry-run"), QStringLiteral("Print the resolved build request and exit.")});
     parser.process(app);
@@ -113,15 +124,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    qunsetenv("BAMF_DESKTOP_FILE_HINT");
-    qunsetenv("CHROME_DESKTOP");
-    qunsetenv("DESKTOP_STARTUP_ID");
-    qunsetenv("GIO_LAUNCHED_DESKTOP_FILE");
-    qunsetenv("GIO_LAUNCHED_DESKTOP_FILE_PID");
+#if defined(Q_OS_LINUX)
+    clearInheritedDesktopHints();
+#endif
 
-    QApplication::setApplicationName(QStringLiteral("PHPManager"));
-    QApplication::setOrganizationName(QStringLiteral("PHPManager"));
-    QApplication::setDesktopFileName(QStringLiteral("phpmanager"));
+    QApplication::setApplicationName(QStringLiteral("LangManager"));
+    QApplication::setOrganizationName(QStringLiteral("LangManager"));
+    QApplication::setApplicationDisplayName(QStringLiteral("LangManager"));
+    QApplication::setDesktopFileName(QStringLiteral("langmanager"));
 
     QApplication app(argc, argv);
     const QIcon icon = createAppIcon();

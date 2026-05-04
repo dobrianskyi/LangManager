@@ -1,11 +1,11 @@
-# Maintainer: PHPManager maintainers
+# Maintainer: LangManager maintainers
 
-pkgname=phpmanager
+pkgname=langmanager
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='Qt application for building and managing local PHP CLI versions'
+pkgdesc='Qt application for building and managing local language toolchains'
 arch=('x86_64')
-url='https://local.invalid/PHPManager'
+url='https://local.invalid/LangManager'
 license=('custom')
 depends=('qt6-base' 'libarchive')
 makedepends=('cmake' 'ninja' 'pkgconf')
@@ -14,7 +14,7 @@ source=("${pkgname}-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-    cmake -S "${srcdir}/PHPManager-${pkgver}" -B "${srcdir}/build" -G Ninja \
+    cmake -S "${srcdir}/LangManager-${pkgver}" -B "${srcdir}/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr
     cmake --build "${srcdir}/build"

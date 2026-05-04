@@ -1,12 +1,12 @@
 <RCC>
     <qresource prefix="/">
-        <file>assets/phpmanager-icon.svg</file>
-        <file>assets/icons/phpmanager-16.png</file>
-        <file>assets/icons/phpmanager-32.png</file>
-        <file>assets/icons/phpmanager-48.png</file>
-        <file>assets/icons/phpmanager-64.png</file>
-        <file>assets/icons/phpmanager-128.png</file>
-        <file>assets/icons/phpmanager-256.png</file>
-        <file>assets/icons/phpmanager-512.png</file>
+        <file>assets/langmanager-icon.svg</file>
+        <file>assets/icons/langmanager-16.png</file>
+        <file>assets/icons/langmanager-32.png</file>
+        <file>assets/icons/langmanager-48.png</file>
+        <file>assets/icons/langmanager-64.png</file>
+        <file>assets/icons/langmanager-128.png</file>
+        <file>assets/icons/langmanager-256.png</file>
+        <file>assets/icons/langmanager-512.png</file>
     </qresource>
 </RCC>

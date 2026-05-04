@@ -8,7 +8,7 @@ compile_commands.json
 
 # Local test/runtime state
 .test-install/
-.phpmanager-headless/
+.langmanager-headless/
 
 # Release/package artifacts
 dist/

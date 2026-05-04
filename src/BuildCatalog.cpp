@@ -21,7 +21,8 @@ LocalSourcePackage sourcePackage(const QString &name,
                                  const QString &sourceDirectoryName,
                                  const QStringList &configureArguments = {},
                                  const QString &buildSystem = QStringLiteral("configure"),
-                                 const QString &configureProgram = QStringLiteral("configure"))
+                                 const QString &configureProgram = QStringLiteral("configure"),
+                                 const QStringList &installArguments = {QStringLiteral("install")})
 {
     return LocalSourcePackage{
         name,
@@ -30,7 +31,75 @@ LocalSourcePackage sourcePackage(const QString &name,
         configureArguments,
         buildSystem,
         configureProgram,
+        installArguments,
     };
+}
+
+int phpMajorVersion(const QString &version)
+{
+    bool ok = false;
+    const int major = version.section(QLatin1Char('.'), 0, 0).toInt(&ok);
+    return ok ? major : 0;
+}
+
+LocalSourcePackage opensslSourcePackageForPhpVersion(const QString &version)
+{
+    if (phpMajorVersion(version) == 7) {
+        return sourcePackage(
+            QStringLiteral("openssl"),
+            QStringLiteral("https://www.openssl.org/source/openssl-1.1.1w.tar.gz"),
+            QStringLiteral("openssl-1.1.1w"),
+            {QStringLiteral("no-tests"), QStringLiteral("shared")},
+            QStringLiteral("configure"),
+            QStringLiteral("config"),
+            {QStringLiteral("install_sw")});
+    }
+
+    return sourcePackage(
+        QStringLiteral("openssl"),
+        QStringLiteral("https://www.openssl.org/source/openssl-3.5.4.tar.gz"),
+        QStringLiteral("openssl-3.5.4"),
+        {QStringLiteral("no-tests")},
+        QStringLiteral("configure"),
+        QStringLiteral("config"));
+}
+
+LocalSourcePackage libxml2SourcePackageForPhpVersion(const QString &version)
+{
+    if (phpMajorVersion(version) == 7) {
+        return sourcePackage(QStringLiteral("libxml2"),
+                             QStringLiteral("https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz"),
+                             QStringLiteral("libxml2-2.9.14"), {
+                                 QStringLiteral("--with-zlib=${zlib}"),
+                                 QStringLiteral("--without-python"),
+                             });
+    }
+
+    return sourcePackage(QStringLiteral("libxml2"),
+                         QStringLiteral("https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.1.tar.xz"),
+                         QStringLiteral("libxml2-2.15.1"), {
+                             QStringLiteral("--with-zlib=${zlib}"),
+                             QStringLiteral("--without-python"),
+                         });
+}
+
+LocalSourcePackage icuSourcePackageForPhpVersion(const QString &version)
+{
+    if (phpMajorVersion(version) == 7) {
+        return sourcePackage(QStringLiteral("icu"),
+                             QStringLiteral("https://github.com/unicode-org/icu/releases/download/release-70-1/icu4c-70_1-src.tgz"),
+                             QStringLiteral("icu/source"), {
+                                 QStringLiteral("--disable-samples"),
+                                 QStringLiteral("--disable-tests"),
+                             });
+    }
+
+    return sourcePackage(QStringLiteral("icu"),
+                         QStringLiteral("https://github.com/unicode-org/icu/releases/download/release-77-1/icu4c-77_1-src.tgz"),
+                         QStringLiteral("icu/source"), {
+                             QStringLiteral("--disable-samples"),
+                             QStringLiteral("--disable-tests"),
+                         });
 }
 
 } // namespace
@@ -48,7 +117,7 @@ QList<ModuleDefinition> allModuleDefinitions()
         {QStringLiteral("mbstring"), QStringLiteral("--enable-mbstring"), {}, QStringLiteral("oniguruma"), true},
         {QStringLiteral("OpenSSL"), QStringLiteral("--with-openssl=${openssl}"), {}, QStringLiteral("openssl"), true},
         {QStringLiteral("cURL"), QStringLiteral("--with-curl=${curl}"), {}, QStringLiteral("curl"), true},
-        {QStringLiteral("OPcache"), QStringLiteral("--enable-opcache"), {}, {}, true},
+        {QStringLiteral("OPcache"), QStringLiteral("--enable-opcache=shared"), {}, {}, true},
         {QStringLiteral("PDO"), QStringLiteral("--enable-pdo"), {}, {}, true},
         {QStringLiteral("PDO MySQL"), QStringLiteral("--with-pdo-mysql"), {}, {}, true},
         {QStringLiteral("MySQLi"), QStringLiteral("--with-mysqli"), {}, {}, true},
@@ -247,6 +316,10 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         }
     }
 
+    if (phpMajorVersion(version) == 7) {
+        localPackageNames.insert(QStringLiteral("libxml2"));
+    }
+
     auto addPackageOnce = [&request](const LocalSourcePackage &package) {
         for (const LocalSourcePackage &existing : request.localPackages) {
             if (existing.name == package.name) {
@@ -268,7 +341,7 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
     }
     if (localPackageNames.contains(QStringLiteral("openssl"))
         || localPackageNames.contains(QStringLiteral("curl"))) {
-        addPackageOnce(sourcePackage(QStringLiteral("openssl"), QStringLiteral("https://www.openssl.org/source/openssl-3.5.4.tar.gz"), QStringLiteral("openssl-3.5.4"), {QStringLiteral("no-tests")}, QStringLiteral("configure"), QStringLiteral("config")));
+        addPackageOnce(opensslSourcePackageForPhpVersion(version));
     }
     if (localPackageNames.contains(QStringLiteral("curl"))) {
         addPackageOnce(sourcePackage(QStringLiteral("curl"), QStringLiteral("https://curl.se/download/curl-8.17.0.tar.xz"), QStringLiteral("curl-8.17.0"), {
@@ -279,10 +352,7 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         }));
     }
     if (localPackageNames.contains(QStringLiteral("libxml2"))) {
-        addPackageOnce(sourcePackage(QStringLiteral("libxml2"), QStringLiteral("https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.1.tar.xz"), QStringLiteral("libxml2-2.15.1"), {
-            QStringLiteral("--with-zlib=${zlib}"),
-            QStringLiteral("--without-python"),
-        }));
+        addPackageOnce(libxml2SourcePackageForPhpVersion(version));
     }
     if (localPackageNames.contains(QStringLiteral("sqlite"))) {
         addPackageOnce(sourcePackage(QStringLiteral("sqlite"), QStringLiteral("https://www.sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"), QStringLiteral("sqlite-autoconf-3510000")));
@@ -291,10 +361,7 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         addPackageOnce(sourcePackage(QStringLiteral("oniguruma"), QStringLiteral("https://github.com/kkos/oniguruma/releases/download/v6.9.10/onig-6.9.10.tar.gz"), QStringLiteral("onig-6.9.10")));
     }
     if (localPackageNames.contains(QStringLiteral("icu"))) {
-        addPackageOnce(sourcePackage(QStringLiteral("icu"), QStringLiteral("https://github.com/unicode-org/icu/releases/download/release-77-1/icu4c-77_1-src.tgz"), QStringLiteral("icu/source"), {
-            QStringLiteral("--disable-samples"),
-            QStringLiteral("--disable-tests"),
-        }));
+        addPackageOnce(icuSourcePackageForPhpVersion(version));
     }
     if (localPackageNames.contains(QStringLiteral("libzip"))) {
         addPackageOnce(sourcePackage(QStringLiteral("libzip"), QStringLiteral("https://libzip.org/download/libzip-1.11.4.tar.xz"), QStringLiteral("libzip-1.11.4"), {

@@ -1,16 +1,20 @@
 #include "MainWindow.h"
 
-#include "ArchiveExtractor.h"
 #include "BuildCatalog.h"
+#include "CommandRunner.h"
+#include "GoDefaultSwitcher.h"
+#include "GoVersionCatalog.h"
+#include "PhpIniRepair.h"
 #include "PhpDefaultSwitcher.h"
+#include "PhpToolInstaller.h"
+#include "PhpVersionCatalog.h"
+#include "ShellPathHelper.h"
 
 #include <QAbstractItemView>
-#include <QCoreApplication>
 #include <QBrush>
 #include <QColor>
+#include <QDesktopServices>
 #include <QDir>
-#include <QDirIterator>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -26,21 +30,17 @@
 #include <QJsonObject>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QMessageBox>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
-#include <QProcess>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSet>
 #include <QStandardPaths>
 #include <QSizePolicy>
-#include <QSysInfo>
 #include <QTabWidget>
-#include <QTemporaryDir>
 #include <QTextStream>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
@@ -50,106 +50,33 @@ constexpr int BuildVersionRole = Qt::UserRole + 2;
 constexpr int ChannelRole = Qt::UserRole + 3;
 const QColor InstalledGreen(31, 122, 63);
 
-struct PhpChannel {
-    QString channel;
-    QString buildVersion;
-};
-
-QList<PhpChannel> availablePhpChannels()
-{
-    return {
-        {QStringLiteral("8.5"), QStringLiteral("8.5.4")},
-        {QStringLiteral("8.4"), QStringLiteral("8.4.20")},
-        {QStringLiteral("8.3"), QStringLiteral("8.3.29")},
-        {QStringLiteral("8.2"), QStringLiteral("8.2.30")},
-        {QStringLiteral("8.1"), QStringLiteral("8.1.34")},
-        {QStringLiteral("8.0"), QStringLiteral("8.0.30")},
-        {QStringLiteral("7.4"), QStringLiteral("7.4.33")},
-    };
-}
-
-QString phpChannelFromVersion(const QString &version)
-{
-    const QStringList parts = version.split('.');
-    if (parts.size() < 2) {
-        return version;
-    }
-    return QStringLiteral("%1.%2").arg(parts.at(0), parts.at(1));
-}
-
-QString phpSymlinkPath(const QString &installBasePath, const QString &defaultBinPath)
+QString goSymlinkPath(const QString &installBasePath, const QString &defaultBinPath)
 {
     const QString binPath = defaultBinPath.isEmpty()
         ? QDir(installBasePath).filePath(QStringLiteral("bin"))
         : defaultBinPath;
-    return QDir(binPath).filePath(QStringLiteral("php"));
+    return QDir(binPath).filePath(QStringLiteral("go"));
 }
 
-bool pathContainsDirectory(const QString &directory)
-{
-    return qEnvironmentVariable("PATH")
-        .split(':', Qt::SkipEmptyParts)
-        .contains(QDir(directory).absolutePath());
-}
-
-QString shellPathExpression(const QString &directory)
-{
-    const QString homePath = QDir::homePath();
-    const QString absoluteDirectory = QDir(directory).absolutePath();
-    if (absoluteDirectory == homePath) {
-        return QStringLiteral("$HOME");
-    }
-    if (absoluteDirectory.startsWith(homePath + QLatin1Char('/'))) {
-        return QStringLiteral("$HOME/%1").arg(absoluteDirectory.mid(homePath.size() + 1));
-    }
-    return absoluteDirectory;
-}
-
-bool shellConfigAlreadyContainsPath(const QString &content, const QString &directory)
-{
-    const QString absoluteDirectory = QDir(directory).absolutePath();
-    const QString expression = shellPathExpression(absoluteDirectory);
-    QString tildeExpression;
-    const QString homePath = QDir::homePath();
-    if (absoluteDirectory.startsWith(homePath + QLatin1Char('/'))) {
-        tildeExpression = QStringLiteral("~/%1").arg(absoluteDirectory.mid(homePath.size() + 1));
-    }
-    return content.contains(absoluteDirectory)
-        || content.contains(expression)
-        || (!tildeExpression.isEmpty() && content.contains(tildeExpression));
-}
-
-QString preferredShellConfigPath()
-{
-    const QString shell = qEnvironmentVariable("SHELL");
-    if (shell.endsWith(QStringLiteral("zsh"))) {
-        return QDir::home().filePath(QStringLiteral(".zshrc"));
-    }
-    if (shell.endsWith(QStringLiteral("bash"))) {
-        return QDir::home().filePath(QStringLiteral(".bashrc"));
-    }
-    return QDir::home().filePath(QStringLiteral(".profile"));
-}
-
-QString defaultSummaryText(const QString &installBasePath, const QString &defaultVersion, const QString &defaultBinPath)
+QString goDefaultSummaryText(const QString &installBasePath, const QString &defaultVersion, const QString &defaultBinPath)
 {
     if (defaultVersion.isEmpty()) {
         return QStringLiteral("Default: not selected");
     }
 
-    const QString linkPath = phpSymlinkPath(installBasePath, defaultBinPath);
+    const QString linkPath = goSymlinkPath(installBasePath, defaultBinPath);
     const QString binPath = QFileInfo(linkPath).absolutePath();
     const QFileInfo linkInfo(linkPath);
     const QString targetPath = linkInfo.isSymLink() ? linkInfo.symLinkTarget() : QString();
 
     QString summary;
     if (targetPath.isEmpty()) {
-        summary = QStringLiteral("Default: PHP %1 via %2").arg(defaultVersion, linkPath);
+        summary = QStringLiteral("Default: Go %1 via %2").arg(defaultVersion, linkPath);
     } else {
-        summary = QStringLiteral("Default: PHP %1 via %2 -> %3").arg(defaultVersion, linkPath, targetPath);
+        summary = QStringLiteral("Default: Go %1 via %2 -> %3").arg(defaultVersion, linkPath, targetPath);
     }
     if (!pathContainsDirectory(binPath)) {
-        summary.append(QStringLiteral("\nPATH missing: add %1 to use `php` in a terminal.").arg(binPath));
+        summary.append(QStringLiteral("\nPATH missing: add %1 to use `go` in a terminal.").arg(binPath));
     }
     return summary;
 }
@@ -165,6 +92,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_controller, &PhpBuildController::progressChanged, m_progressBar, &QProgressBar::setValue);
     connect(&m_controller, &PhpBuildController::logLine, this, &MainWindow::appendLogLine);
     connect(&m_controller, &PhpBuildController::finished, this, &MainWindow::onBuildFinished);
+    connect(&m_goController, &GoInstallController::statusChanged, m_goStatusLabel, &QLabel::setText);
+    connect(&m_goController, &GoInstallController::progressChanged, m_goProgressBar, &QProgressBar::setValue);
+    connect(&m_goController, &GoInstallController::logLine, this, [this](const QString &line) {
+        if (!m_goLogEdit) {
+            return;
+        }
+        m_goLogEdit->append(line.toHtmlEscaped().replace('\n', QStringLiteral("<br>")));
+        m_goLogEdit->verticalScrollBar()->setValue(m_goLogEdit->verticalScrollBar()->maximum());
+    });
+    connect(&m_goController, &GoInstallController::finished, this, &MainWindow::onGoInstallFinished);
 }
 
 void MainWindow::updateInstallBaseFromTarget(int index)
@@ -183,6 +120,21 @@ void MainWindow::updateInstallBaseFromTarget(int index)
     refreshToolStatus();
 }
 
+void MainWindow::updateGoInstallBaseFromTarget(int index)
+{
+    const QString value = m_goInstallTargetCombo->itemData(index).toString();
+    const bool custom = value == QStringLiteral("custom");
+    m_goInstallBaseEdit->setEnabled(custom);
+    m_goBrowseButton->setEnabled(custom);
+
+    if (value == QStringLiteral("local")) {
+        m_goInstallBaseEdit->setText(QDir::home().filePath(QStringLiteral(".local")));
+    } else if (value == QStringLiteral("opt")) {
+        m_goInstallBaseEdit->setText(QStringLiteral("/opt"));
+    }
+    refreshInstalledGoVersions();
+}
+
 void MainWindow::chooseInstallBase()
 {
     const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("Select install base"), m_installBaseEdit->text());
@@ -193,14 +145,33 @@ void MainWindow::chooseInstallBase()
     }
 }
 
+void MainWindow::chooseGoInstallBase()
+{
+    const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("Select install base"), m_goInstallBaseEdit->text());
+    if (!path.isEmpty()) {
+        m_goInstallBaseEdit->setText(path);
+        refreshInstalledGoVersions();
+    }
+}
+
 void MainWindow::onVersionSelectionChanged()
 {
     updateSelectedVersionDetails();
 }
 
+void MainWindow::onGoVersionSelectionChanged()
+{
+    updateSelectedGoVersionDetails();
+}
+
 void MainWindow::installSelectedVersion()
 {
     startBuild();
+}
+
+void MainWindow::installSelectedGoVersion()
+{
+    startGoInstall();
 }
 
 void MainWindow::startBuild()
@@ -303,6 +274,39 @@ void MainWindow::startBuild()
     m_controller.start(request);
 }
 
+void MainWindow::startGoInstall()
+{
+    const QString version = selectedGoVersion();
+    GoInstallRequest request;
+    request.version = version;
+    request.archiveUrl = QUrl(goArchiveUrl(version));
+    request.installBasePath = m_goInstallBaseEdit->text();
+
+    if (goArchiveArchitecture().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Unsupported architecture"), QStringLiteral("Cannot resolve a Go Linux archive for this CPU architecture."));
+        return;
+    }
+
+    const QStringList preflight = {
+        QStringLiteral("Go version: %1").arg(request.version),
+        QStringLiteral("Install base: %1").arg(request.installBasePath),
+        QStringLiteral("Archive: %1").arg(request.archiveUrl.toString()),
+    };
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this,
+        QStringLiteral("Install Go"),
+        QStringLiteral("Preflight check passed.\n\n%1\n\nStart install?").arg(preflight.join(QStringLiteral("\n"))));
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
+    m_goLogEdit->clear();
+    m_goReadyLabel->setText(QStringLiteral("Installing Go %1").arg(request.version));
+    m_goReadyLabel->setStyleSheet(QStringLiteral("color: #9a6b00; font-weight: 600;"));
+    setGoRunning(true);
+    m_goController.start(request);
+}
+
 void MainWindow::onBuildFinished(bool success, const QString &message, const QString &installPath)
 {
     setRunning(false);
@@ -317,6 +321,23 @@ void MainWindow::onBuildFinished(bool success, const QString &message, const QSt
     appendLogLine(message);
 }
 
+void MainWindow::onGoInstallFinished(bool success, const QString &message, const QString &installPath)
+{
+    setGoRunning(false);
+    if (success) {
+        m_goReadyLabel->setText(QStringLiteral("Ready: %1/bin/go").arg(installPath));
+        m_goReadyLabel->setStyleSheet(QStringLiteral("color: #1f7a3f; font-weight: 600;"));
+        refreshInstalledGoVersions();
+    } else {
+        m_goReadyLabel->setText(QStringLiteral("Failed"));
+        m_goReadyLabel->setStyleSheet(QStringLiteral("color: #9b1c1c; font-weight: 600;"));
+    }
+    if (m_goLogEdit) {
+        m_goLogEdit->append(message.toHtmlEscaped().replace('\n', QStringLiteral("<br>")));
+        m_goLogEdit->verticalScrollBar()->setValue(m_goLogEdit->verticalScrollBar()->maximum());
+    }
+}
+
 void MainWindow::setSelectedVersionAsDefault()
 {
     const QJsonObject manifest = selectedVersionManifest();
@@ -325,6 +346,16 @@ void MainWindow::setSelectedVersionAsDefault()
     }
 
     setManifestAsDefault(manifest);
+}
+
+void MainWindow::setSelectedGoVersionAsDefault()
+{
+    const QJsonObject manifest = selectedGoVersionManifest();
+    if (manifest.isEmpty()) {
+        return;
+    }
+
+    setGoManifestAsDefault(manifest);
 }
 
 void MainWindow::removeSelectedVersion()
@@ -404,6 +435,82 @@ void MainWindow::removeSelectedVersion()
     refreshInstalledVersions();
 }
 
+void MainWindow::removeSelectedGoVersion()
+{
+    const QJsonObject manifest = selectedGoVersionManifest();
+    if (manifest.isEmpty()) {
+        return;
+    }
+
+    const QString version = manifest.value(QStringLiteral("version")).toString();
+    const QString installPath = manifest.value(QStringLiteral("installPath")).toString();
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this,
+        QStringLiteral("Remove Go %1").arg(version),
+        QStringLiteral("Remove %1 and its registry entry?").arg(installPath));
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
+    QFile registryFile(installedGoRegistryPath());
+    QJsonObject registry;
+    if (registryFile.open(QIODevice::ReadOnly)) {
+        registry = QJsonDocument::fromJson(registryFile.readAll()).object();
+    }
+
+    QJsonArray versions;
+    for (const QJsonValue &value : registry.value(QStringLiteral("versions")).toArray()) {
+        const QJsonObject object = value.toObject();
+        if (object.value(QStringLiteral("installPath")).toString() != installPath) {
+            versions.append(object);
+        }
+    }
+    registry.insert(QStringLiteral("versions"), versions);
+
+    if (registry.value(QStringLiteral("defaultInstallPath")).toString() == installPath) {
+        const QStringList binaryNames = {
+            QStringLiteral("go"),
+            QStringLiteral("gofmt"),
+        };
+        const QString binPath = registry.value(QStringLiteral("defaultBinPath")).toString(
+            QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("bin")));
+        for (const QString &binaryName : binaryNames) {
+            const QString linkPath = QDir(binPath).filePath(binaryName);
+            const QFileInfo linkInfo(linkPath);
+            if (linkInfo.isSymLink() && linkInfo.symLinkTarget().startsWith(installPath)) {
+                QFile::remove(linkPath);
+            }
+        }
+        registry.remove(QStringLiteral("defaultVersion"));
+        registry.remove(QStringLiteral("defaultInstallPath"));
+        registry.remove(QStringLiteral("defaultGoBinary"));
+        registry.remove(QStringLiteral("defaultBinPath"));
+        registry.remove(QStringLiteral("defaultSetAtUtc"));
+    }
+
+    QSaveFile output(installedGoRegistryPath());
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, QStringLiteral("Cannot update registry"), output.errorString());
+        return;
+    }
+    output.write(QJsonDocument(registry).toJson(QJsonDocument::Indented));
+    if (!output.commit()) {
+        QMessageBox::warning(this, QStringLiteral("Cannot update registry"), output.errorString());
+        return;
+    }
+
+    QDir installDirectory(installPath);
+    if (installDirectory.exists() && !installDirectory.removeRecursively()) {
+        QMessageBox::warning(this, QStringLiteral("Cannot remove Go"), QStringLiteral("Cannot remove %1").arg(installPath));
+        return;
+    }
+
+    if (m_goLogEdit) {
+        m_goLogEdit->append(QStringLiteral("Removed Go %1: %2").arg(version, installPath).toHtmlEscaped());
+    }
+    refreshInstalledGoVersions();
+}
+
 void MainWindow::fixPathForCurrentDefault()
 {
     if (m_currentDefaultBinPath.isEmpty()) {
@@ -433,7 +540,7 @@ void MainWindow::fixPathForCurrentDefault()
             stream << '\n';
         }
         stream << '\n'
-               << "# PHPManager PATH\n"
+               << "# LangManager PATH\n"
                << "case \":$PATH:\" in\n"
                << "    *\":" << pathExpression << ":\"*) ;;\n"
                << "    *) export PATH=\"" << pathExpression << ":$PATH\" ;;\n"
@@ -447,13 +554,67 @@ void MainWindow::fixPathForCurrentDefault()
             .toUtf8());
     }
 
-    appendLogLine(QStringLiteral("Added PHPManager bin directory to PATH config: %1").arg(configPath));
+    appendLogLine(QStringLiteral("Added LangManager bin directory to PATH config: %1").arg(configPath));
     QMessageBox::information(
         this,
         QStringLiteral("PATH updated"),
         QStringLiteral("Added %1 to %2. Open a new terminal, then run php -v.")
             .arg(m_currentDefaultBinPath, configPath));
     refreshInstalledVersions();
+}
+
+void MainWindow::fixPathForCurrentDefaultGo()
+{
+    if (m_currentDefaultGoBinPath.isEmpty()) {
+        return;
+    }
+
+    const QString configPath = preferredShellConfigPath();
+    QFile existingConfig(configPath);
+    QString content;
+    if (existingConfig.open(QIODevice::ReadOnly)) {
+        content = QString::fromUtf8(existingConfig.readAll());
+    }
+
+    const QString pathExpression = shellPathExpression(m_currentDefaultGoBinPath);
+    if (!shellConfigAlreadyContainsPath(content, m_currentDefaultGoBinPath)) {
+        QFile configFile(configPath);
+        if (!configFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            QMessageBox::warning(
+                this,
+                QStringLiteral("Cannot update PATH"),
+                QStringLiteral("Cannot write %1: %2").arg(configPath, configFile.errorString()));
+            return;
+        }
+
+        QTextStream stream(&configFile);
+        if (!content.endsWith(QLatin1Char('\n')) && !content.isEmpty()) {
+            stream << '\n';
+        }
+        stream << '\n'
+               << "# LangManager Go PATH\n"
+               << "case \":$PATH:\" in\n"
+               << "    *\":" << pathExpression << ":\"*) ;;\n"
+               << "    *) export PATH=\"" << pathExpression << ":$PATH\" ;;\n"
+               << "esac\n";
+    }
+
+    const QString currentPath = qEnvironmentVariable("PATH");
+    if (!pathContainsDirectory(m_currentDefaultGoBinPath)) {
+        qputenv("PATH", QStringLiteral("%1:%2")
+            .arg(QDir(m_currentDefaultGoBinPath).absolutePath(), currentPath)
+            .toUtf8());
+    }
+
+    if (m_goLogEdit) {
+        m_goLogEdit->append(QStringLiteral("Added LangManager Go bin directory to PATH config: %1").arg(configPath).toHtmlEscaped());
+    }
+    QMessageBox::information(
+        this,
+        QStringLiteral("PATH updated"),
+        QStringLiteral("Added %1 to %2. Open a new terminal, then run go version.")
+            .arg(m_currentDefaultGoBinPath, configPath));
+    refreshInstalledGoVersions();
 }
 
 void MainWindow::applyBuildProfile(int index)
@@ -474,93 +635,25 @@ void MainWindow::applyBuildProfile(int index)
 
 void MainWindow::installComposerCli()
 {
-    const QString phpBinary = defaultPhpBinary();
-    if (phpBinary.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("Composer needs PHP"), QStringLiteral("Set an installed PHP version as default first."));
+    const ToolInstallResult result = PhpToolInstaller::installComposer(m_installBaseEdit->text());
+    if (!result.success) {
+        QMessageBox::warning(this, QStringLiteral("Cannot install Composer"), result.message);
         return;
     }
 
-    const QString composerPath = QDir(m_installBaseEdit->text()).filePath(QStringLiteral("tools/composer/composer.phar"));
-    QString error;
-    if (!downloadToFile(QUrl(QStringLiteral("https://getcomposer.org/download/latest-stable/composer.phar")), composerPath, &error)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Composer"), error);
-        return;
-    }
-
-    QDir().mkpath(installBaseBinPath());
-    const QString wrapperPath = QDir(installBaseBinPath()).filePath(QStringLiteral("composer"));
-    QSaveFile wrapper(wrapperPath);
-    if (!wrapper.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Composer"), wrapper.errorString());
-        return;
-    }
-    wrapper.write(QStringLiteral("#!/usr/bin/env sh\nexec \"%1\" \"%2\" \"$@\"\n")
-        .arg(QDir(installBaseBinPath()).filePath(QStringLiteral("php")), composerPath)
-        .toUtf8());
-    if (!wrapper.commit()) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Composer"), wrapper.errorString());
-        return;
-    }
-    QFile::setPermissions(wrapperPath, QFile::permissions(wrapperPath)
-        | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
-
-    appendLogLine(QStringLiteral("Installed Composer locally: %1").arg(wrapperPath));
+    appendLogLine(result.message);
     refreshToolStatus();
 }
 
 void MainWindow::installSymfonyCli()
 {
-    QTemporaryDir tempDir;
-    if (!tempDir.isValid()) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), QStringLiteral("Cannot create temporary directory."));
+    const ToolInstallResult result = PhpToolInstaller::installSymfonyCli(m_installBaseEdit->text());
+    if (!result.success) {
+        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), result.message);
         return;
     }
 
-    const QString archivePath = QDir(tempDir.path()).filePath(QStringLiteral("symfony-cli.tar.gz"));
-    QString error;
-    if (!downloadToFile(QUrl(symfonyCliDownloadUrl()), archivePath, &error)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), error);
-        return;
-    }
-
-    const QString extractPath = QDir(tempDir.path()).filePath(QStringLiteral("extract"));
-    if (!ArchiveExtractor::extractArchive(archivePath, extractPath, &error)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), error);
-        return;
-    }
-
-    const QString extractedBinary = QDir(extractPath).filePath(QStringLiteral("symfony"));
-    if (!QFileInfo::exists(extractedBinary)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), QStringLiteral("Symfony archive did not contain the expected binary."));
-        return;
-    }
-
-    const QString toolsPath = QDir(m_installBaseEdit->text()).filePath(QStringLiteral("tools/symfony/symfony"));
-    QDir().mkpath(QFileInfo(toolsPath).absolutePath());
-    QFile::remove(toolsPath);
-    if (!QFile::copy(extractedBinary, toolsPath)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), QStringLiteral("Cannot copy Symfony binary to %1").arg(toolsPath));
-        return;
-    }
-    QFile::setPermissions(toolsPath, QFile::permissions(toolsPath)
-        | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
-
-    QDir().mkpath(installBaseBinPath());
-    const QString linkPath = QDir(installBaseBinPath()).filePath(QStringLiteral("symfony"));
-    const QFileInfo linkInfo(linkPath);
-    if ((linkInfo.exists() || linkInfo.isSymLink()) && !linkInfo.isSymLink()) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), QStringLiteral("Refusing to overwrite non-symlink file: %1").arg(linkPath));
-        return;
-    }
-    if (linkInfo.isSymLink()) {
-        QFile::remove(linkPath);
-    }
-    if (!QFile::link(toolsPath, linkPath)) {
-        QMessageBox::warning(this, QStringLiteral("Cannot install Symfony CLI"), QStringLiteral("Cannot create symlink %1").arg(linkPath));
-        return;
-    }
-
-    appendLogLine(QStringLiteral("Installed Symfony CLI locally: %1").arg(linkPath));
+    appendLogLine(result.message);
     refreshToolStatus();
 }
 
@@ -571,18 +664,86 @@ void MainWindow::refreshToolStatus()
 
     if (m_composerStatusLabel) {
         if (QFileInfo::exists(composerPath)) {
-            m_composerStatusLabel->setText(runToolCommand(composerPath, {QStringLiteral("--version")}));
+            const QString output = runToolCommand(composerPath, {QStringLiteral("--version")});
+            m_composerStatusLabel->setText(compactToolStatus(QStringLiteral("Composer"), output));
+            m_composerStatusLabel->setToolTip(compactToolTooltip(output));
         } else {
             m_composerStatusLabel->setText(QStringLiteral("Composer is not installed in this install base."));
+            m_composerStatusLabel->setToolTip({});
         }
     }
     if (m_symfonyStatusLabel) {
         if (QFileInfo::exists(symfonyPath)) {
-            m_symfonyStatusLabel->setText(runToolCommand(symfonyPath, {QStringLiteral("--version")}));
+            const QString output = runToolCommand(symfonyPath, {QStringLiteral("-V")});
+            m_symfonyStatusLabel->setText(compactToolStatus(QStringLiteral("Symfony CLI"), output));
+            m_symfonyStatusLabel->setToolTip(compactToolTooltip(output));
         } else {
             m_symfonyStatusLabel->setText(QStringLiteral("Symfony CLI is not installed in this install base."));
+            m_symfonyStatusLabel->setToolTip({});
         }
     }
+}
+
+void MainWindow::showVersionContextMenu(const QPoint &position)
+{
+    if (!m_versionsList || m_controller.isRunning()) {
+        return;
+    }
+
+    QListWidgetItem *item = m_versionsList->itemAt(position);
+    if (!item) {
+        return;
+    }
+
+    const QString payload = item->data(ManifestRole).toString();
+    if (payload.isEmpty()) {
+        return;
+    }
+
+    const QJsonObject manifest = QJsonDocument::fromJson(payload.toUtf8()).object();
+    const QString installPath = manifest.value(QStringLiteral("installPath")).toString();
+    if (installPath.isEmpty() || !QFileInfo::exists(installPath)) {
+        return;
+    }
+
+    m_versionsList->setCurrentItem(item);
+
+    QMenu menu(this);
+    menu.addAction(QStringLiteral("Open folder"), this, [installPath]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(installPath));
+    });
+    menu.exec(m_versionsList->viewport()->mapToGlobal(position));
+}
+
+void MainWindow::showGoVersionContextMenu(const QPoint &position)
+{
+    if (!m_goVersionsList || m_goController.isRunning()) {
+        return;
+    }
+
+    QListWidgetItem *item = m_goVersionsList->itemAt(position);
+    if (!item) {
+        return;
+    }
+
+    const QString payload = item->data(ManifestRole).toString();
+    if (payload.isEmpty()) {
+        return;
+    }
+
+    const QJsonObject manifest = QJsonDocument::fromJson(payload.toUtf8()).object();
+    const QString installPath = manifest.value(QStringLiteral("installPath")).toString();
+    if (installPath.isEmpty() || !QFileInfo::exists(installPath)) {
+        return;
+    }
+
+    m_goVersionsList->setCurrentItem(item);
+
+    QMenu menu(this);
+    menu.addAction(QStringLiteral("Open folder"), this, [installPath]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(installPath));
+    });
+    menu.exec(m_goVersionsList->viewport()->mapToGlobal(position));
 }
 
 bool MainWindow::setManifestAsDefault(const QJsonObject &manifest)
@@ -606,9 +767,30 @@ bool MainWindow::setManifestAsDefault(const QJsonObject &manifest)
     return true;
 }
 
+bool MainWindow::setGoManifestAsDefault(const QJsonObject &manifest)
+{
+    QString error;
+    if (!GoDefaultSwitcher::setDefault(m_goInstallBaseEdit->text(), manifest, &error)) {
+        if (m_currentGoLabel) {
+            m_currentGoLabel->setText(QStringLiteral("Default switch failed"));
+        }
+        QMessageBox::warning(this, QStringLiteral("Cannot set default Go"), error);
+        return false;
+    }
+
+    const QString version = manifest.value(QStringLiteral("version")).toString();
+    const QString binPath = QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("bin"));
+    const QString summary = goDefaultSummaryText(m_goInstallBaseEdit->text(), version, binPath);
+    if (m_currentGoLabel) {
+        m_currentGoLabel->setText(summary);
+    }
+    refreshInstalledGoVersions();
+    return true;
+}
+
 void MainWindow::buildUi()
 {
-    setWindowTitle(QStringLiteral("PHPManager"));
+    setWindowTitle(QStringLiteral("LangManager"));
     resize(1180, 680);
 
     auto *central = new QWidget(this);
@@ -624,9 +806,20 @@ void MainWindow::buildUi()
         "QProgressBar { min-height: 16px; }"
     ));
 
-    auto *tabs = new QTabWidget(central);
+    auto *languageTabs = new QTabWidget(central);
+    languageTabs->setDocumentMode(true);
+    languageTabs->setTabPosition(QTabWidget::West);
+    languageTabs->setMovable(false);
+    rootLayout->addWidget(languageTabs, 1);
+
+    auto *phpPage = new QWidget(languageTabs);
+    auto *phpPageLayout = new QVBoxLayout(phpPage);
+    phpPageLayout->setContentsMargins(0, 0, 0, 0);
+    phpPageLayout->setSpacing(0);
+
+    auto *tabs = new QTabWidget(phpPage);
     tabs->setDocumentMode(true);
-    rootLayout->addWidget(tabs, 1);
+    phpPageLayout->addWidget(tabs, 1);
 
     auto *versionsPage = new QWidget(tabs);
     auto *versionsLayout = new QHBoxLayout(versionsPage);
@@ -673,6 +866,7 @@ void MainWindow::buildUi()
     m_versionsList = new QListWidget(versionsBox);
     m_versionsList->setUniformItemSizes(true);
     m_versionsList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_versionsList->setContextMenuPolicy(Qt::CustomContextMenu);
     versionsBoxLayout->addWidget(m_currentPhpLabel);
     versionsBoxLayout->addWidget(m_fixPathButton);
     versionsBoxLayout->addWidget(m_versionsList, 1);
@@ -810,7 +1004,9 @@ void MainWindow::buildUi()
     composerBoxLayout->setContentsMargins(8, 12, 8, 8);
     composerBoxLayout->setSpacing(6);
     m_composerStatusLabel = new QLabel(QStringLiteral("Composer is not installed in this install base."), composerBox);
-    m_composerStatusLabel->setWordWrap(true);
+    m_composerStatusLabel->setWordWrap(false);
+    m_composerStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_composerStatusLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     m_installComposerButton = new QPushButton(QStringLiteral("Install or Update Composer"), composerBox);
     composerBoxLayout->addWidget(m_composerStatusLabel);
     composerBoxLayout->addWidget(m_installComposerButton);
@@ -820,7 +1016,9 @@ void MainWindow::buildUi()
     symfonyBoxLayout->setContentsMargins(8, 12, 8, 8);
     symfonyBoxLayout->setSpacing(6);
     m_symfonyStatusLabel = new QLabel(QStringLiteral("Symfony CLI is not installed in this install base."), symfonyBox);
-    m_symfonyStatusLabel->setWordWrap(true);
+    m_symfonyStatusLabel->setWordWrap(false);
+    m_symfonyStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_symfonyStatusLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     m_installSymfonyButton = new QPushButton(QStringLiteral("Install or Update Symfony CLI"), symfonyBox);
     symfonyBoxLayout->addWidget(m_symfonyStatusLabel);
     symfonyBoxLayout->addWidget(m_installSymfonyButton);
@@ -838,11 +1036,129 @@ void MainWindow::buildUi()
     tabs->addTab(optionsPage, QStringLiteral("Build options"));
     tabs->addTab(composerPage, QStringLiteral("Composer"));
 
+    auto *goPage = new QWidget(languageTabs);
+    auto *goLayout = new QHBoxLayout(goPage);
+    goLayout->setContentsMargins(10, 10, 10, 10);
+    goLayout->setSpacing(10);
+
+    auto *goLeftColumn = new QWidget(goPage);
+    goLeftColumn->setMaximumWidth(430);
+    goLeftColumn->setMinimumWidth(360);
+    auto *goLeftLayout = new QVBoxLayout(goLeftColumn);
+    goLeftLayout->setContentsMargins(0, 0, 0, 0);
+    goLeftLayout->setSpacing(8);
+
+    auto *goFormBox = new QGroupBox(QStringLiteral("Install location"), goLeftColumn);
+    auto *goFormLayout = new QFormLayout(goFormBox);
+    goFormLayout->setContentsMargins(8, 12, 8, 8);
+    goFormLayout->setHorizontalSpacing(8);
+    goFormLayout->setVerticalSpacing(6);
+
+    m_goInstallTargetCombo = new QComboBox(goFormBox);
+    m_goInstallTargetCombo->addItem(QStringLiteral("User (~/.local)"), QStringLiteral("local"));
+    m_goInstallTargetCombo->addItem(QStringLiteral("System (/opt)"), QStringLiteral("opt"));
+    m_goInstallTargetCombo->addItem(QStringLiteral("Custom"), QStringLiteral("custom"));
+    goFormLayout->addRow(QStringLiteral("Install target"), m_goInstallTargetCombo);
+
+    auto *goPathRow = new QWidget(goFormBox);
+    auto *goPathLayout = new QHBoxLayout(goPathRow);
+    goPathLayout->setContentsMargins(0, 0, 0, 0);
+    m_goInstallBaseEdit = new QLineEdit(goPathRow);
+    m_goInstallBaseEdit->setText(QDir::home().filePath(QStringLiteral(".local")));
+    m_goBrowseButton = new QPushButton(QStringLiteral("Browse"), goPathRow);
+    goPathLayout->addWidget(m_goInstallBaseEdit, 1);
+    goPathLayout->addWidget(m_goBrowseButton);
+    goFormLayout->addRow(QStringLiteral("Install base"), goPathRow);
+
+    auto *goVersionsBox = new QGroupBox(QStringLiteral("Go versions"), goLeftColumn);
+    auto *goVersionsBoxLayout = new QVBoxLayout(goVersionsBox);
+    goVersionsBoxLayout->setContentsMargins(8, 12, 8, 8);
+    goVersionsBoxLayout->setSpacing(6);
+    m_currentGoLabel = new QLabel(QStringLiteral("Default: not selected"), goVersionsBox);
+    m_currentGoLabel->setWordWrap(true);
+    m_goFixPathButton = new QPushButton(QStringLiteral("Fix PATH"), goVersionsBox);
+    m_goFixPathButton->setVisible(false);
+    m_goVersionsList = new QListWidget(goVersionsBox);
+    m_goVersionsList->setUniformItemSizes(true);
+    m_goVersionsList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_goVersionsList->setContextMenuPolicy(Qt::CustomContextMenu);
+    goVersionsBoxLayout->addWidget(m_currentGoLabel);
+    goVersionsBoxLayout->addWidget(m_goFixPathButton);
+    goVersionsBoxLayout->addWidget(m_goVersionsList, 1);
+
+    auto *goButtonRow = new QHBoxLayout();
+    m_installGoVersionButton = new QPushButton(QStringLiteral("Install"), goLeftColumn);
+    m_setGoVersionDefaultButton = new QPushButton(QStringLiteral("Set default"), goLeftColumn);
+    m_removeGoVersionButton = new QPushButton(QStringLiteral("Remove"), goLeftColumn);
+    m_goCancelButton = new QPushButton(QStringLiteral("Cancel"), goLeftColumn);
+    m_goCancelButton->setEnabled(false);
+    goButtonRow->addWidget(m_installGoVersionButton, 1);
+    goButtonRow->addWidget(m_setGoVersionDefaultButton);
+    goButtonRow->addWidget(m_removeGoVersionButton);
+    goButtonRow->addWidget(m_goCancelButton);
+
+    auto *goStateBox = new QGroupBox(QStringLiteral("Current action"), goLeftColumn);
+    auto *goStateLayout = new QVBoxLayout(goStateBox);
+    goStateLayout->setContentsMargins(8, 12, 8, 8);
+    goStateLayout->setSpacing(6);
+    m_goStatusLabel = new QLabel(QStringLiteral("Idle"), goStateBox);
+    m_goReadyLabel = new QLabel(QStringLiteral("No install running"), goStateBox);
+    m_goReadyLabel->setWordWrap(true);
+    m_goProgressBar = new QProgressBar(goStateBox);
+    m_goProgressBar->setRange(0, 100);
+    goStateLayout->addWidget(m_goStatusLabel);
+    goStateLayout->addWidget(m_goReadyLabel);
+    goStateLayout->addWidget(m_goProgressBar);
+
+    goLeftLayout->addWidget(goFormBox);
+    goLeftLayout->addWidget(goVersionsBox, 1);
+    goLeftLayout->addLayout(goButtonRow);
+    goLeftLayout->addWidget(goStateBox);
+
+    auto *goRightColumn = new QWidget(goPage);
+    auto *goRightLayout = new QVBoxLayout(goRightColumn);
+    goRightLayout->setContentsMargins(0, 0, 0, 0);
+    goRightLayout->setSpacing(8);
+
+    auto *goDetailsBox = new QGroupBox(QStringLiteral("Selected version"), goRightColumn);
+    auto *goDetailsLayout = new QVBoxLayout(goDetailsBox);
+    goDetailsLayout->setContentsMargins(8, 12, 8, 8);
+    goDetailsLayout->setSpacing(6);
+    m_selectedGoVersionTitleLabel = new QLabel(QStringLiteral("Go"), goDetailsBox);
+    m_selectedGoVersionTitleLabel->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 700;"));
+    m_selectedGoVersionStatusLabel = new QLabel(goDetailsBox);
+    m_selectedGoVersionStatusLabel->setWordWrap(true);
+    m_selectedGoVersionDetailsEdit = new QTextEdit(goDetailsBox);
+    m_selectedGoVersionDetailsEdit->setReadOnly(true);
+    m_selectedGoVersionDetailsEdit->setMinimumHeight(160);
+    goDetailsLayout->addWidget(m_selectedGoVersionTitleLabel);
+    goDetailsLayout->addWidget(m_selectedGoVersionStatusLabel);
+    goDetailsLayout->addWidget(m_selectedGoVersionDetailsEdit);
+
+    auto *goOutputBox = new QGroupBox(QStringLiteral("Install output"), goRightColumn);
+    auto *goOutputLayout = new QVBoxLayout(goOutputBox);
+    goOutputLayout->setContentsMargins(8, 12, 8, 8);
+    goOutputLayout->setSpacing(4);
+    m_goLogEdit = new QTextEdit(goOutputBox);
+    m_goLogEdit->setReadOnly(true);
+    m_goLogEdit->setLineWrapMode(QTextEdit::NoWrap);
+    goOutputLayout->addWidget(m_goLogEdit, 1);
+
+    goRightLayout->addWidget(goDetailsBox);
+    goRightLayout->addWidget(goOutputBox, 1);
+
+    goLayout->addWidget(goLeftColumn);
+    goLayout->addWidget(goRightColumn, 1);
+
+    languageTabs->addTab(phpPage, QStringLiteral("PHP"));
+    languageTabs->addTab(goPage, QStringLiteral("Go"));
+
     setCentralWidget(central);
 
     connect(m_installTargetCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::updateInstallBaseFromTarget);
     connect(m_installBaseEdit, &QLineEdit::editingFinished, this, &MainWindow::refreshInstalledVersions);
     connect(m_versionsList, &QListWidget::currentRowChanged, this, &MainWindow::onVersionSelectionChanged);
+    connect(m_versionsList, &QListWidget::customContextMenuRequested, this, &MainWindow::showVersionContextMenu);
     connect(m_installVersionButton, &QPushButton::clicked, this, &MainWindow::installSelectedVersion);
     connect(m_setVersionDefaultButton, &QPushButton::clicked, this, &MainWindow::setSelectedVersionAsDefault);
     connect(m_removeVersionButton, &QPushButton::clicked, this, &MainWindow::removeSelectedVersion);
@@ -852,8 +1168,19 @@ void MainWindow::buildUi()
     connect(m_installSymfonyButton, &QPushButton::clicked, this, &MainWindow::installSymfonyCli);
     connect(m_browseButton, &QPushButton::clicked, this, &MainWindow::chooseInstallBase);
     connect(m_cancelButton, &QPushButton::clicked, &m_controller, &PhpBuildController::cancel);
+    connect(m_goInstallTargetCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::updateGoInstallBaseFromTarget);
+    connect(m_goInstallBaseEdit, &QLineEdit::editingFinished, this, &MainWindow::refreshInstalledGoVersions);
+    connect(m_goVersionsList, &QListWidget::currentRowChanged, this, &MainWindow::onGoVersionSelectionChanged);
+    connect(m_goVersionsList, &QListWidget::customContextMenuRequested, this, &MainWindow::showGoVersionContextMenu);
+    connect(m_installGoVersionButton, &QPushButton::clicked, this, &MainWindow::installSelectedGoVersion);
+    connect(m_setGoVersionDefaultButton, &QPushButton::clicked, this, &MainWindow::setSelectedGoVersionAsDefault);
+    connect(m_removeGoVersionButton, &QPushButton::clicked, this, &MainWindow::removeSelectedGoVersion);
+    connect(m_goFixPathButton, &QPushButton::clicked, this, &MainWindow::fixPathForCurrentDefaultGo);
+    connect(m_goBrowseButton, &QPushButton::clicked, this, &MainWindow::chooseGoInstallBase);
+    connect(m_goCancelButton, &QPushButton::clicked, &m_goController, &GoInstallController::cancel);
     applyBuildProfile(m_buildProfileCombo->currentIndex());
     updateInstallBaseFromTarget(m_installTargetCombo->currentIndex());
+    updateGoInstallBaseFromTarget(m_goInstallTargetCombo->currentIndex());
 }
 
 void MainWindow::appendLogLine(const QString &line)
@@ -871,6 +1198,15 @@ QString MainWindow::selectedVersion() const
     return m_versionsList->currentItem()->data(BuildVersionRole).toString();
 }
 
+QString MainWindow::selectedGoVersion() const
+{
+    if (!m_goVersionsList || !m_goVersionsList->currentItem()) {
+        const QList<GoChannel> channels = availableGoChannels();
+        return channels.isEmpty() ? QString() : channels.first().installVersion;
+    }
+    return m_goVersionsList->currentItem()->data(BuildVersionRole).toString();
+}
+
 QStringList MainWindow::selectedModuleLabels() const
 {
     QStringList labels;
@@ -882,99 +1218,14 @@ QStringList MainWindow::selectedModuleLabels() const
     return labels;
 }
 
-QStringList MainWindow::selectedConfigureFlags() const
-{
-    QStringList flags;
-    for (const ModuleOption &module : m_modules) {
-        if (module.checkBox && module.checkBox->isChecked() && !module.flag.isEmpty()) {
-            flags << module.flag;
-            if (module.localPackageName == QStringLiteral("gd")) {
-                flags << QStringLiteral("--with-jpeg");
-            }
-        }
-    }
-    return flags;
-}
-
-QStringList MainWindow::selectedPeclExtensions() const
-{
-    QStringList extensions;
-    for (const ModuleOption &module : m_modules) {
-        if (module.checkBox && module.checkBox->isChecked() && !module.peclPackage.isEmpty()) {
-            extensions << module.peclPackage;
-        }
-    }
-    return extensions;
-}
-
-QList<LocalSourcePackage> MainWindow::selectedLocalPackages() const
-{
-    bool needsUnixOdbc = false;
-    bool needsPostgreSql = false;
-    bool needsGd = false;
-    for (const ModuleOption &module : m_modules) {
-        if (module.checkBox && module.checkBox->isChecked() && module.localPackageName == QStringLiteral("unixODBC")) {
-            needsUnixOdbc = true;
-        } else if (module.checkBox && module.checkBox->isChecked() && module.localPackageName == QStringLiteral("postgresql")) {
-            needsPostgreSql = true;
-        } else if (module.checkBox && module.checkBox->isChecked() && module.localPackageName == QStringLiteral("gd")) {
-            needsGd = true;
-        }
-    }
-
-    QList<LocalSourcePackage> packages;
-    if (needsGd) {
-        packages << LocalSourcePackage{
-            QStringLiteral("zlib"),
-            QUrl(QStringLiteral("https://zlib.net/fossils/zlib-1.3.2.tar.gz")),
-            QStringLiteral("zlib-1.3.2"),
-            {},
-        };
-        packages << LocalSourcePackage{
-            QStringLiteral("jpeg"),
-            QUrl(QStringLiteral("https://www.ijg.org/files/jpegsrc.v10.tar.gz")),
-            QStringLiteral("jpeg-10"),
-            {},
-        };
-        packages << LocalSourcePackage{
-            QStringLiteral("libpng"),
-            QUrl(QStringLiteral("https://download.sourceforge.net/libpng/libpng-1.6.57.tar.gz")),
-            QStringLiteral("libpng-1.6.57"),
-            {},
-        };
-    }
-
-    if (needsPostgreSql) {
-        packages << LocalSourcePackage{
-            QStringLiteral("postgresql"),
-            QUrl(QStringLiteral("https://ftp.postgresql.org/pub/source/v17.9/postgresql-17.9.tar.gz")),
-            QStringLiteral("postgresql-17.9"),
-            {
-                QStringLiteral("--without-readline"),
-                QStringLiteral("--without-zlib"),
-            },
-        };
-    }
-
-    if (needsUnixOdbc) {
-        packages << LocalSourcePackage{
-            QStringLiteral("unixODBC"),
-            QUrl(QStringLiteral("https://www.unixodbc.org/unixODBC-2.3.12.tar.gz")),
-            QStringLiteral("unixODBC-2.3.12"),
-            {
-                QStringLiteral("--disable-gui"),
-                QStringLiteral("--enable-static"),
-                QStringLiteral("--enable-shared"),
-            },
-        };
-    }
-
-    return packages;
-}
-
 QString MainWindow::installedRegistryPath() const
 {
     return QDir(m_installBaseEdit->text()).filePath(QStringLiteral("php/installed.json"));
+}
+
+QString MainWindow::installedGoRegistryPath() const
+{
+    return QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("go/installed.json"));
 }
 
 QJsonObject MainWindow::selectedVersionManifest() const
@@ -991,207 +1242,38 @@ QJsonObject MainWindow::selectedVersionManifest() const
     return QJsonDocument::fromJson(payload.toUtf8()).object();
 }
 
+QJsonObject MainWindow::selectedGoVersionManifest() const
+{
+    if (!m_goVersionsList || !m_goVersionsList->currentItem()) {
+        return {};
+    }
+
+    const QString payload = m_goVersionsList->currentItem()->data(ManifestRole).toString();
+    if (payload.isEmpty()) {
+        return {};
+    }
+
+    return QJsonDocument::fromJson(payload.toUtf8()).object();
+}
+
 QString MainWindow::runPhpCommand(const QString &phpBinary, const QStringList &arguments) const
 {
-    return runToolCommand(phpBinary, arguments);
+    return ::runToolCommand(phpBinary, arguments);
 }
 
-QString MainWindow::runToolCommand(const QString &program, const QStringList &arguments) const
+QString MainWindow::runGoCommand(const QString &goBinary, const QStringList &arguments) const
 {
-    QProcess process;
-    process.setProgram(program);
-    process.setArguments(arguments);
-    process.start();
-    if (!process.waitForStarted(3000)) {
-        return QStringLiteral("Cannot start %1: %2").arg(program, process.errorString());
-    }
-    if (!process.waitForFinished(5000)) {
-        process.kill();
-        process.waitForFinished(1000);
-        return QStringLiteral("Command timed out: %1 %2").arg(program, arguments.join(' '));
-    }
-
-    QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
-    const QString errorOutput = QString::fromLocal8Bit(process.readAllStandardError());
-    if (!errorOutput.trimmed().isEmpty()) {
-        if (!output.endsWith(QLatin1Char('\n')) && !output.isEmpty()) {
-            output.append(QLatin1Char('\n'));
-        }
-        output.append(errorOutput);
-    }
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        if (!output.endsWith(QLatin1Char('\n')) && !output.isEmpty()) {
-            output.append(QLatin1Char('\n'));
-        }
-        output.append(QStringLiteral("[exit code %1]").arg(process.exitCode()));
-    }
-    return output.trimmed();
-}
-
-bool MainWindow::downloadToFile(const QUrl &url, const QString &path, QString *errorMessage)
-{
-    QNetworkAccessManager network;
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("PHPManager/0.1 QtNetwork"));
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-
-    QNetworkReply *reply = network.get(request);
-    QEventLoop loop;
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        if (errorMessage) {
-            *errorMessage = reply->errorString();
-        }
-        reply->deleteLater();
-        return false;
-    }
-
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QSaveFile output(path);
-    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (errorMessage) {
-            *errorMessage = output.errorString();
-        }
-        reply->deleteLater();
-        return false;
-    }
-    output.write(reply->readAll());
-    reply->deleteLater();
-    if (!output.commit()) {
-        if (errorMessage) {
-            *errorMessage = output.errorString();
-        }
-        return false;
-    }
-    return true;
+    return ::runToolCommand(goBinary, arguments);
 }
 
 QString MainWindow::installBaseBinPath() const
 {
-    return QDir(m_installBaseEdit->text()).filePath(QStringLiteral("bin"));
+    return PhpToolInstaller::installBaseBinPath(m_installBaseEdit->text());
 }
 
-QString MainWindow::defaultPhpBinary() const
+QString MainWindow::goInstallBaseBinPath() const
 {
-    const QString managedPhp = QDir(installBaseBinPath()).filePath(QStringLiteral("php"));
-    if (QFileInfo::exists(managedPhp)) {
-        return managedPhp;
-    }
-
-    QFile registryFile(installedRegistryPath());
-    if (registryFile.open(QIODevice::ReadOnly)) {
-        const QJsonObject registry = QJsonDocument::fromJson(registryFile.readAll()).object();
-        const QString phpBinary = registry.value(QStringLiteral("defaultPhpBinary")).toString();
-        if (QFileInfo::exists(phpBinary)) {
-            return phpBinary;
-        }
-    }
-    return {};
-}
-
-QString MainWindow::symfonyCliDownloadUrl() const
-{
-    const QString architecture = QSysInfo::currentCpuArchitecture();
-    QString assetArchitecture = QStringLiteral("amd64");
-    if (architecture == QStringLiteral("arm64") || architecture == QStringLiteral("aarch64")) {
-        assetArchitecture = QStringLiteral("arm64");
-    } else if (architecture == QStringLiteral("i386") || architecture == QStringLiteral("i686")) {
-        assetArchitecture = QStringLiteral("386");
-    }
-    return QStringLiteral("https://github.com/symfony-cli/symfony-cli/releases/latest/download/symfony-cli_linux_%1.tar.gz")
-        .arg(assetArchitecture);
-}
-
-QString MainWindow::installedExtensionPath(const QString &installPath, const QString &fileName) const
-{
-    const QString extensionRoot = QDir(installPath).filePath(QStringLiteral("lib/php/extensions"));
-    QDirIterator iterator(extensionRoot, {fileName}, QDir::Files, QDirIterator::Subdirectories);
-    if (iterator.hasNext()) {
-        return iterator.next();
-    }
-    return {};
-}
-
-bool MainWindow::ensurePhpIniForManifest(const QJsonObject &manifest)
-{
-    const QString installPath = manifest.value(QStringLiteral("installPath")).toString();
-    if (installPath.isEmpty()) {
-        return false;
-    }
-
-    const QString phpIniPath = manifest.value(QStringLiteral("phpIniPath")).toString(
-        QDir(installPath).filePath(QStringLiteral("lib/php.ini")));
-    if (QFileInfo::exists(phpIniPath)) {
-        return true;
-    }
-
-    QStringList lines;
-    lines << QStringLiteral("; Generated by PHPManager.")
-          << QStringLiteral("memory_limit=512M")
-          << QStringLiteral("date.timezone=UTC");
-
-    const QJsonArray modules = manifest.value(QStringLiteral("selectedModules")).toArray();
-    bool needsOpcache = false;
-    for (const QJsonValue &value : modules) {
-        if (value.toString() == QStringLiteral("OPcache")) {
-            needsOpcache = true;
-            break;
-        }
-    }
-
-    if (needsOpcache) {
-        const QString opcachePath = installedExtensionPath(installPath, QStringLiteral("opcache.so"));
-        if (opcachePath.isEmpty()) {
-            appendLogLine(QStringLiteral("Cannot repair php.ini: opcache.so is missing for %1").arg(installPath));
-            return false;
-        }
-        lines << QString()
-              << QStringLiteral("[opcache]")
-              << QStringLiteral("zend_extension=%1").arg(opcachePath)
-              << QStringLiteral("opcache.enable=1")
-              << QStringLiteral("opcache.enable_cli=1")
-              << QStringLiteral("opcache.memory_consumption=128")
-              << QStringLiteral("opcache.interned_strings_buffer=16")
-              << QStringLiteral("opcache.max_accelerated_files=20000")
-              << QStringLiteral("opcache.validate_timestamps=1")
-              << QStringLiteral("opcache.revalidate_freq=0");
-    }
-
-    const QJsonArray peclExtensions = manifest.value(QStringLiteral("peclExtensions")).toArray();
-    if (!peclExtensions.isEmpty()) {
-        lines << QString() << QStringLiteral("[phpmanager-pecl]");
-        for (const QJsonValue &value : peclExtensions) {
-            const QString extension = value.toString();
-            const QString extensionPath = installedExtensionPath(installPath, QStringLiteral("%1.so").arg(extension));
-            if (extensionPath.isEmpty()) {
-                appendLogLine(QStringLiteral("Cannot repair php.ini: %1.so is missing for %2").arg(extension, installPath));
-                return false;
-            }
-            if (extension == QStringLiteral("xdebug")) {
-                lines << QStringLiteral("zend_extension=%1").arg(extensionPath);
-            } else {
-                lines << QStringLiteral("extension=%1").arg(extensionPath);
-            }
-        }
-    }
-
-    QDir().mkpath(QFileInfo(phpIniPath).absolutePath());
-    QSaveFile phpIniFile(phpIniPath);
-    if (!phpIniFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        appendLogLine(QStringLiteral("Cannot repair php.ini %1: %2").arg(phpIniPath, phpIniFile.errorString()));
-        return false;
-    }
-    phpIniFile.write(lines.join(QStringLiteral("\n")).toUtf8());
-    phpIniFile.write("\n");
-    if (!phpIniFile.commit()) {
-        appendLogLine(QStringLiteral("Cannot commit repaired php.ini %1: %2").arg(phpIniPath, phpIniFile.errorString()));
-        return false;
-    }
-
-    appendLogLine(QStringLiteral("Repaired missing php.ini: %1").arg(phpIniPath));
-    return true;
+    return QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("bin"));
 }
 
 void MainWindow::refreshInstalledVersions()
@@ -1226,7 +1308,11 @@ void MainWindow::refreshInstalledVersions()
         if (manifest.value(QStringLiteral("status")).toString() != QStringLiteral("ready")) {
             continue;
         }
-        ensurePhpIniForManifest(manifest);
+        QStringList repairLogLines;
+        PhpIniRepair::ensureForManifest(manifest, &repairLogLines);
+        for (const QString &line : repairLogLines) {
+            appendLogLine(line);
+        }
         const QString version = manifest.value(QStringLiteral("version")).toString();
         const QString channel = phpChannelFromVersion(version);
         manifestsByChannel.insert(channel, manifest);
@@ -1298,6 +1384,109 @@ void MainWindow::refreshInstalledVersions()
     updateSelectedVersionDetails();
 }
 
+void MainWindow::refreshInstalledGoVersions()
+{
+    if (!m_goVersionsList) {
+        return;
+    }
+
+    const QString previouslySelectedChannel = m_goVersionsList->currentItem()
+        ? m_goVersionsList->currentItem()->data(ChannelRole).toString()
+        : QString();
+    m_goVersionsList->blockSignals(true);
+    m_goVersionsList->clear();
+
+    QJsonObject registry;
+    QFile registryFile(installedGoRegistryPath());
+    if (registryFile.open(QIODevice::ReadOnly)) {
+        registry = QJsonDocument::fromJson(registryFile.readAll()).object();
+    }
+
+    const QString defaultInstallPath = registry.value(QStringLiteral("defaultInstallPath")).toString();
+    QString defaultVersion = registry.value(QStringLiteral("defaultVersion")).toString();
+    QString defaultBinPath = registry.value(QStringLiteral("defaultBinPath")).toString();
+    if (defaultBinPath.isEmpty()) {
+        defaultBinPath = QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("bin"));
+    }
+    const QString defaultLinkTarget = QFileInfo(goSymlinkPath(m_goInstallBaseEdit->text(), defaultBinPath)).symLinkTarget();
+    const bool hasDefaultSymlink = !defaultLinkTarget.isEmpty();
+    QHash<QString, QJsonObject> manifestsByChannel;
+    for (const QJsonValue &value : registry.value(QStringLiteral("versions")).toArray()) {
+        QJsonObject manifest = value.toObject();
+        if (manifest.value(QStringLiteral("status")).toString() != QStringLiteral("ready")) {
+            continue;
+        }
+        const QString version = manifest.value(QStringLiteral("version")).toString();
+        const QString channel = goChannelFromVersion(version);
+        manifestsByChannel.insert(channel, manifest);
+    }
+
+    int selectedRow = 0;
+    const QList<GoChannel> channels = availableGoChannels();
+    for (int i = 0; i < channels.size(); ++i) {
+        const GoChannel channel = channels.at(i);
+        QJsonObject manifest = manifestsByChannel.value(channel.channel);
+        const bool installed = !manifest.isEmpty();
+        const QString version = installed ? manifest.value(QStringLiteral("version")).toString() : channel.installVersion;
+        const QString installPath = manifest.value(QStringLiteral("installPath")).toString();
+        const QString goBinary = manifest.value(QStringLiteral("goBinary")).toString();
+        const bool registryDefault = !defaultInstallPath.isEmpty() && installPath == defaultInstallPath;
+        const bool symlinkDefault = !defaultLinkTarget.isEmpty() && QFileInfo(defaultLinkTarget).absoluteFilePath() == QFileInfo(goBinary).absoluteFilePath();
+        const bool isDefault = installed && (hasDefaultSymlink ? symlinkDefault : registryDefault);
+        if (isDefault) {
+            defaultVersion = version;
+        }
+
+        manifest.insert(QStringLiteral("isDefault"), isDefault);
+        QString label;
+        if (installed) {
+            label = QStringLiteral("Go %1  (%2 installed)").arg(channel.channel, version);
+        } else {
+            label = QStringLiteral("Go %1  (not installed)").arg(channel.channel);
+        }
+        if (isDefault) {
+            label.append(QStringLiteral("  default"));
+        }
+        const QString payload = QString::fromUtf8(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
+
+        auto *item = new QListWidgetItem(label);
+        item->setData(ChannelRole, channel.channel);
+        item->setData(BuildVersionRole, channel.installVersion);
+        item->setData(ManifestRole, installed ? payload : QString());
+        if (installed) {
+            item->setForeground(QBrush(InstalledGreen));
+        }
+        QFont font = item->font();
+        font.setBold(isDefault);
+        item->setFont(font);
+        m_goVersionsList->addItem(item);
+
+        if (!previouslySelectedChannel.isEmpty() && previouslySelectedChannel == channel.channel) {
+            selectedRow = i;
+        } else if (previouslySelectedChannel.isEmpty() && isDefault) {
+            selectedRow = i;
+        }
+    }
+
+    const QString summary = goDefaultSummaryText(m_goInstallBaseEdit->text(), defaultVersion, defaultBinPath);
+    if (m_currentGoLabel) {
+        m_currentGoLabel->setText(summary);
+    }
+    m_currentDefaultGoBinPath = defaultVersion.isEmpty() ? QString() : QDir(defaultBinPath).absolutePath();
+    if (m_goFixPathButton) {
+        const bool showFixPath = !m_currentDefaultGoBinPath.isEmpty() && !pathContainsDirectory(m_currentDefaultGoBinPath);
+        m_goFixPathButton->setVisible(showFixPath);
+        m_goFixPathButton->setEnabled(showFixPath && !m_goController.isRunning());
+        m_goFixPathButton->setText(QStringLiteral("Fix PATH (%1)").arg(m_currentDefaultGoBinPath));
+    }
+
+    if (m_goVersionsList->count() > 0) {
+        m_goVersionsList->setCurrentRow(qBound(0, selectedRow, m_goVersionsList->count() - 1));
+    }
+    m_goVersionsList->blockSignals(false);
+    updateSelectedGoVersionDetails();
+}
+
 void MainWindow::updateSelectedVersionDetails()
 {
     if (!m_versionsList || !m_versionsList->currentItem()) {
@@ -1349,6 +1538,55 @@ void MainWindow::updateSelectedVersionDetails()
     m_removeVersionButton->setEnabled(installed && !m_controller.isRunning());
 }
 
+void MainWindow::updateSelectedGoVersionDetails()
+{
+    if (!m_goVersionsList || !m_goVersionsList->currentItem()) {
+        return;
+    }
+
+    QListWidgetItem *item = m_goVersionsList->currentItem();
+    const QString channel = item->data(ChannelRole).toString();
+    const QString installVersion = item->data(BuildVersionRole).toString();
+    const QJsonObject manifest = selectedGoVersionManifest();
+    const bool installed = !manifest.isEmpty();
+    const bool isDefault = manifest.value(QStringLiteral("isDefault")).toBool();
+
+    m_selectedGoVersionTitleLabel->setText(QStringLiteral("Go %1").arg(channel));
+
+    QStringList details;
+    if (installed) {
+        const QString goBinary = manifest.value(QStringLiteral("goBinary")).toString();
+        m_selectedGoVersionStatusLabel->setText(isDefault
+            ? QStringLiteral("Installed and selected as default Go")
+            : QStringLiteral("Installed"));
+        m_selectedGoVersionStatusLabel->setStyleSheet(QStringLiteral("color: #1f7a3f; font-weight: 600;"));
+
+        details << QStringLiteral("Installed version: %1").arg(manifest.value(QStringLiteral("version")).toString());
+        details << QStringLiteral("Install path: %1").arg(manifest.value(QStringLiteral("installPath")).toString());
+        details << QStringLiteral("Go binary: %1").arg(goBinary);
+        details << QStringLiteral("Installed at: %1").arg(manifest.value(QStringLiteral("installedAtUtc")).toString());
+        details << QString();
+        details << QStringLiteral("$ %1 version").arg(goBinary);
+        details << runGoCommand(goBinary, {QStringLiteral("version")});
+        details << QString();
+        details << QStringLiteral("$ %1 env GOROOT GOPATH GOTOOLDIR").arg(goBinary);
+        details << runGoCommand(goBinary, {QStringLiteral("env"), QStringLiteral("GOROOT"), QStringLiteral("GOPATH"), QStringLiteral("GOTOOLDIR")});
+    } else {
+        m_selectedGoVersionStatusLabel->setText(QStringLiteral("Not installed"));
+        m_selectedGoVersionStatusLabel->setStyleSheet(QStringLiteral("color: #9b1c1c; font-weight: 600;"));
+        details << QStringLiteral("Install version: %1").arg(installVersion);
+        details << QStringLiteral("Archive: %1").arg(goArchiveUrl(installVersion));
+        details << QStringLiteral("Install path: %1").arg(QDir(m_goInstallBaseEdit->text()).filePath(QStringLiteral("go/%1").arg(installVersion)));
+    }
+
+    m_selectedGoVersionDetailsEdit->setPlainText(details.join('\n'));
+    m_installGoVersionButton->setText(installed
+        ? QStringLiteral("Reinstall Go %1").arg(channel)
+        : QStringLiteral("Install Go %1").arg(channel));
+    m_setGoVersionDefaultButton->setEnabled(installed && !isDefault && !m_goController.isRunning());
+    m_removeGoVersionButton->setEnabled(installed && !m_goController.isRunning());
+}
+
 void MainWindow::setRunning(bool running)
 {
     m_installTargetCombo->setEnabled(!running);
@@ -1367,4 +1605,19 @@ void MainWindow::setRunning(bool running)
             module.checkBox->setEnabled(!running);
         }
     }
+}
+
+void MainWindow::setGoRunning(bool running)
+{
+    m_goInstallTargetCombo->setEnabled(!running);
+    const bool custom = m_goInstallTargetCombo->currentData().toString() == QStringLiteral("custom");
+    m_goInstallBaseEdit->setEnabled(!running && custom);
+    m_goBrowseButton->setEnabled(!running && custom);
+    m_goVersionsList->setEnabled(!running);
+    m_installGoVersionButton->setEnabled(!running);
+    m_goCancelButton->setEnabled(running);
+    if (m_goFixPathButton) {
+        m_goFixPathButton->setEnabled(!running && !m_currentDefaultGoBinPath.isEmpty() && !pathContainsDirectory(m_currentDefaultGoBinPath));
+    }
+    updateSelectedGoVersionDetails();
 }

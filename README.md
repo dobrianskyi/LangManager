@@ -1,6 +1,6 @@
-# PHPManager
+# LangManager
 
-Qt Widgets application for downloading, unpacking, compiling, and installing PHP CLI versions on Linux.
+Qt Widgets application for downloading, unpacking, compiling, and installing PHP CLI versions and Go toolchains on Linux.
 
 ## Current scope
 
@@ -17,6 +17,9 @@ Qt Widgets application for downloading, unpacking, compiling, and installing PHP
 - Select build profiles: `Minimal CLI`, `Symfony required`, `Symfony practical`, and `Full`.
 - Run a preflight check before each build showing selected modules, local source dependencies, PECL extensions, and missing build tools.
 - Install Composer and Symfony CLI locally into the selected install base instead of globally.
+- Switch between PHP and Go from the left sidebar.
+- Install official Linux Go toolchain archives into the selected install base.
+- Mark one installed Go branch as the default through managed `go` and `gofmt` symlinks.
 
 ## Linux dependencies
 
@@ -30,13 +33,13 @@ sudo pacman -S qt6-base cmake ninja libarchive
 
 The PHP build step also needs a C compiler, `make`, and development libraries for the selected PHP modules. If a checked module is missing its system dependency, the GUI will show the failing `configure` or `make` output. Rare native dependencies such as ODBC, LDAP, SNMP, Tidy, Enchant, GMP, GD, and Imagick are visible in the module list but are not enabled by default.
 
-Some native dependencies can be built locally by PHPManager. For example, selecting `ODBC` or `PDO ODBC` downloads and builds `unixODBC` into:
+Some native dependencies can be built locally by LangManager. For example, selecting `ODBC` or `PDO ODBC` downloads and builds `unixODBC` into:
 
 ```text
 ~/.local/php/8.4.20/deps/unixODBC/
 ```
 
-PHPManager then passes that local dependency to PHP's configure step through `PKG_CONFIG_PATH`, `CPPFLAGS`, `LDFLAGS`, `LD_LIBRARY_PATH`, and explicit configure prefixes. Nothing is installed into `/usr` or the system package database.
+LangManager then passes that local dependency to PHP's configure step through `PKG_CONFIG_PATH`, `CPPFLAGS`, `LDFLAGS`, `LD_LIBRARY_PATH`, and explicit configure prefixes. Nothing is installed into `/usr` or the system package database.
 
 The same local dependency mechanism is used for:
 
@@ -51,16 +54,16 @@ The build profile menu controls module selection:
 - `Symfony practical`: Symfony required extensions plus common local-development modules such as Intl, mbstring, OpenSSL, cURL, OPcache, PDO drivers, Redis, Xdebug, XML, ZIP, and GD.
 - `Full`: selects every module visible in the UI. Some less-common modules may still need additional local dependency recipes.
 
-Successful installs are registered only after PHP and all selected PECL extensions finish without errors. PHPManager writes two metadata files:
+Successful installs are registered only after PHP and all selected PECL extensions finish without errors. LangManager writes two metadata files:
 
 ```text
-~/.local/php/8.4.20/.phpmanager.json
+~/.local/php/8.4.20/.langmanager.json
 ~/.local/php/installed.json
 ```
 
 The per-version manifest stores the PHP version, install path, selected module labels, configure flags, PECL extensions, local source packages, PHP binary path, install timestamp, and `ready` status. The shared registry lets the GUI list installed versions for the currently selected install base and show which modules belong to each version.
 
-During configure, PHPManager explicitly sets PHP's configuration locations to the selected prefix:
+During configure, LangManager explicitly sets PHP's configuration locations to the selected prefix:
 
 ```text
 --with-config-file-path=~/.local/php/<version>/lib
@@ -69,7 +72,7 @@ During configure, PHPManager explicitly sets PHP's configuration locations to th
 
 After PHP and PECL extension installation completes, it writes the generated `php.ini` to that exact config-file path so CLI PHP loads OPcache and selected PECL Zend extensions such as Xdebug immediately.
 
-The Versions tab can mark a ready version as the default for the selected install base. PHPManager creates or updates managed symlinks in:
+The Versions tab can mark a ready version as the default for the selected install base. LangManager creates or updates managed symlinks in:
 
 ```text
 ~/.local/bin/php
@@ -81,11 +84,31 @@ The Versions tab can mark a ready version as the default for the selected instal
 
 Each link points to the selected version under `~/.local/php/<version>/bin/`. The app refuses to overwrite regular files, so an existing non-symlink `php` command must be moved manually. The shell will use this default PHP when the install base `bin` directory is earlier in `PATH` than other PHP installations. For the default user install target that usually means `~/.local/bin` must be in `PATH`.
 
-If PHPManager detects a default PHP symlink but the selected install base `bin` directory is missing from `PATH`, it shows a `Fix PATH` button on the Versions tab. The button updates the user's shell startup file (`~/.bashrc`, `~/.zshrc`, or `~/.profile` depending on the current shell) and prepends the bin directory to the current application process environment. A new terminal session will then resolve `php`.
+If LangManager detects a default PHP symlink but the selected install base `bin` directory is missing from `PATH`, it shows a `Fix PATH` button on the Versions tab. The button updates the user's shell startup file (`~/.bashrc`, `~/.zshrc`, or `~/.profile` depending on the current shell) and prepends the bin directory to the current application process environment. A new terminal session will then resolve `php`.
 
 The Versions tab is the main screen. It shows PHP branches such as `PHP 8.4`, and if a branch is installed it shows the concrete installed patch version in parentheses, for example `PHP 8.4 (8.4.20 installed)`. Available branches currently include `8.5`, `8.4`, `8.3`, `8.2`, `8.1`, `8.0`, and `7.4`. Installed branches are highlighted in green, the current default is bold, and the selected branch exposes actions to install, rebuild, set as default, or remove that installation. On startup the UI reads the actual `bin/php` symlink target so it shows which PHP command the shell will resolve.
 
 Module choices are kept behind the Build options tab. They apply to the next install or rebuild of the selected PHP branch.
+
+The Go page uses the same install-base and default-switching model. Go toolchains are installed under:
+
+```text
+~/.local/go/<version>/
+```
+
+The default Go version creates or updates managed symlinks in:
+
+```text
+~/.local/bin/go
+~/.local/bin/gofmt
+```
+
+Installed Go versions are tracked in:
+
+```text
+~/.local/go/<version>/.langmanager-go.json
+~/.local/go/installed.json
+```
 
 The Composer tab installs tool binaries under the selected install base:
 
@@ -103,20 +126,20 @@ Composer is exposed through a wrapper that runs the managed PHP command from the
 The repository includes a small Bash companion script that uses the same registry and symlink layout as the GUI. CMake copies it to the build directory as:
 
 ```text
-./build/phpmanager
+./build/langmanager
 ```
 
 Common commands:
 
 ```sh
-./build/phpmanager list
-./build/phpmanager current
-./build/phpmanager use 8.2
-./build/phpmanager use 8.2.30
-eval "$(./build/phpmanager env)"
+./build/langmanager list
+./build/langmanager current
+./build/langmanager use 8.2
+./build/langmanager use 8.2.30
+eval "$(./build/langmanager env)"
 ```
 
-By default it manages `~/.local`. Use `--base <path>` or `PHPMANAGER_INSTALL_BASE` for another install base.
+By default it manages `~/.local`. Use `--base <path>` or `LANGMANAGER_INSTALL_BASE` for another install base.
 
 Symfony `current` is already Symfony 8.0 and requires PHP 8.4+. Symfony 7.4 is still available as a maintained 7.x documentation branch. The app prioritizes the extensions Symfony lists as technical requirements: Ctype, iconv, PCRE, Session, SimpleXML, and Tokenizer. It also puts common Symfony project extensions near the top. The default checked profile is intentionally conservative: Symfony essentials plus common CLI/Web extensions. Optional database drivers, PECL extensions, and extensions with heavier system dependencies are unchecked until the user explicitly selects them.
 
@@ -125,7 +148,7 @@ Symfony `current` is already Symfony 8.0 and requires PHP 8.4+. Symfony 7.4 is s
 ```sh
 cmake -S . -B build -G Ninja
 cmake --build build
-./build/PHPManager
+./build/LangManager
 ```
 
 ## Notes

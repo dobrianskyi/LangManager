@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-install_base="${PHPMANAGER_INSTALL_BASE:-$HOME/.local}"
+install_base="${LANGMANAGER_INSTALL_BASE:-$HOME/.local}"
 
 usage() {
     cat <<'USAGE'
-phpmanager - small CLI companion for PHPManager
+langmanager - small CLI companion for LangManager
 
 Usage:
-  phpmanager list
-  phpmanager use <major.minor|version>
-  phpmanager current
-  phpmanager env
+  langmanager list
+  langmanager use <major.minor|version>
+  langmanager current
+  langmanager env
 
 Options:
-  --base <path>   Install base, defaults to ~/.local or PHPMANAGER_INSTALL_BASE.
+  --base <path>   Install base, defaults to ~/.local or LANGMANAGER_INSTALL_BASE.
 
 Examples:
-  phpmanager list
-  phpmanager use 8.2
-  phpmanager use 8.2.30
-  eval "$(phpmanager env)"
+  langmanager list
+  langmanager use 8.2
+  langmanager use 8.2.30
+  eval "$(langmanager env)"
 USAGE
 }
 
@@ -52,7 +52,7 @@ bin_dir="$install_base/bin"
 
 need_registry() {
     if [[ ! -f "$registry" ]]; then
-        echo "No PHPManager registry: $registry" >&2
+        echo "No LangManager registry: $registry" >&2
         exit 1
     fi
 }
@@ -129,7 +129,7 @@ case "$cmd" in
         need_registry
         wanted="${1:-}"
         if [[ -z "$wanted" ]]; then
-            echo "Usage: phpmanager use <major.minor|version>" >&2
+            echo "Usage: langmanager use <major.minor|version>" >&2
             exit 1
         fi
         manifest="$(json_query find "$wanted" || true)"
@@ -168,7 +168,7 @@ PY
         echo "$bin_dir/php -> $(readlink -f "$bin_dir/php")"
         ;;
     env)
-        printf 'export PHPMANAGER_INSTALL_BASE=%q\n' "$install_base"
+        printf 'export LANGMANAGER_INSTALL_BASE=%q\n' "$install_base"
         printf 'export PATH=%q:$PATH\n' "$bin_dir"
         ;;
     *)

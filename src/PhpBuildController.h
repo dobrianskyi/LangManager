@@ -5,7 +5,6 @@
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QProcess>
-#include <QProcessEnvironment>
 #include <QStringList>
 #include <QUrl>
 
@@ -16,6 +15,7 @@ struct LocalSourcePackage {
     QStringList configureArguments;
     QString buildSystem = QStringLiteral("configure");
     QString configureProgram = QStringLiteral("configure");
+    QStringList installArguments = {QStringLiteral("install")};
 };
 
 struct PhpBuildRequest {
@@ -97,12 +97,10 @@ private:
     void runPeclMake();
     void runPeclInstall();
     void runProcess(Step step, const QString &program, const QStringList &arguments, const QString &workingDirectory);
-    QProcessEnvironment buildEnvironment() const;
     QString phpIniPath() const;
     QString phpIniScanDirectory() const;
     bool writePhpIni(QString *errorMessage);
     bool writeInstallManifest(QString *errorMessage) const;
-    void cleanupSuccessfulBuildArtifacts();
     void markComplete();
 
     QNetworkAccessManager m_network;

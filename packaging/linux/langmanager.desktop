@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=LangManager
+Comment=Build and manage local language toolchains
+Exec=LangManager
+Icon=langmanager
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true
+StartupWMClass=LangManager

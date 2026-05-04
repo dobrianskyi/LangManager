@@ -1,10 +1,13 @@
 #include "PhpBuildController.h"
 
 #include "ArchiveExtractor.h"
+#include "BuildArtifactCleaner.h"
+#include "PhpBuildEnvironment.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,6 +15,17 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QThread>
+
+namespace {
+
+int phpMajorVersion(const QString &version)
+{
+    bool ok = false;
+    const int major = version.section(QLatin1Char('.'), 0, 0).toInt(&ok);
+    return ok ? major : 0;
+}
+
+} // namespace
 
 PhpBuildController::PhpBuildController(QObject *parent)
     : QObject(parent)
@@ -214,7 +228,7 @@ void PhpBuildController::preparePaths()
     if (cacheRoot.isEmpty()) {
         cacheRoot = QDir::home().filePath(QStringLiteral(".cache"));
     }
-    cacheRoot = QDir(cacheRoot).filePath(QStringLiteral("phpmanager"));
+    cacheRoot = QDir(cacheRoot).filePath(QStringLiteral("langmanager"));
     const QString stamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-hhmmss"));
 
     m_workRoot = QDir(cacheRoot).filePath(QStringLiteral("build-%1-%2").arg(m_request.version, stamp));
@@ -242,7 +256,7 @@ void PhpBuildController::beginDownload()
     }
 
     QNetworkRequest request(m_request.sourceUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("PHPManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
@@ -316,7 +330,7 @@ void PhpBuildController::beginLocalPackageDownload()
     }
 
     QNetworkRequest request(package.sourceUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("PHPManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
@@ -354,17 +368,7 @@ void PhpBuildController::beginLocalPackageExtraction()
 void PhpBuildController::runLocalPackageConfigure()
 {
     const LocalSourcePackage package = m_request.localPackages.at(m_currentLocalPackageIndex);
-    auto resolvedArguments = [this, package]() {
-        QStringList arguments;
-        for (QString argument : package.configureArguments) {
-            for (const LocalSourcePackage &dependency : m_request.localPackages) {
-                const QString prefixPath = QDir(m_installPath).filePath(QStringLiteral("deps/%1").arg(dependency.name));
-                argument.replace(QStringLiteral("${%1}").arg(dependency.name), prefixPath);
-            }
-            arguments << argument;
-        }
-        return arguments;
-    };
+    const QStringList resolvedArguments = resolveLocalPackagePlaceholders(package.configureArguments, m_request.localPackages, m_installPath);
 
     if (package.buildSystem == QStringLiteral("cmake")) {
         QDir().mkpath(m_localBuildPath);
@@ -374,21 +378,21 @@ void PhpBuildController::runLocalPackageConfigure()
              << QStringLiteral("-DCMAKE_INSTALL_PREFIX=%1").arg(m_localPrefixPath)
              << QStringLiteral("-DCMAKE_BUILD_TYPE=Release")
              << QStringLiteral("-DBUILD_SHARED_LIBS=ON");
-        args << resolvedArguments();
+        args << resolvedArguments;
         runProcess(Step::ConfiguringLocalPackage, QStringLiteral("cmake"), args, m_localSourcePath);
         return;
     }
 
     QStringList args;
     args << QStringLiteral("--prefix=%1").arg(m_localPrefixPath);
-    args << resolvedArguments();
+    args << resolvedArguments;
     runProcess(Step::ConfiguringLocalPackage, QDir(m_localSourcePath).filePath(package.configureProgram), args, m_localSourcePath);
 }
 
 void PhpBuildController::runLocalPackageMake()
 {
     const LocalSourcePackage package = m_request.localPackages.at(m_currentLocalPackageIndex);
-    const int jobs = qMax(1, QThread::idealThreadCount());
+    const int jobs = phpBuildJobs();
     if (package.buildSystem == QStringLiteral("cmake")) {
         runProcess(Step::BuildingLocalPackage, QStringLiteral("cmake"), {QStringLiteral("--build"), m_localBuildPath, QStringLiteral("--parallel"), QString::number(jobs)}, m_localBuildPath);
         return;
@@ -403,7 +407,7 @@ void PhpBuildController::runLocalPackageInstall()
         runProcess(Step::InstallingLocalPackage, QStringLiteral("cmake"), {QStringLiteral("--install"), m_localBuildPath}, m_localBuildPath);
         return;
     }
-    runProcess(Step::InstallingLocalPackage, QStringLiteral("make"), {QStringLiteral("install")}, m_localSourcePath);
+    runProcess(Step::InstallingLocalPackage, QStringLiteral("make"), package.installArguments, m_localSourcePath);
 }
 
 void PhpBuildController::runConfigure()
@@ -418,19 +422,13 @@ void PhpBuildController::runConfigure()
     if (!m_request.peclExtensions.isEmpty()) {
         args << QStringLiteral("--with-pear");
     }
-    for (QString flag : m_request.configureFlags) {
-        for (const LocalSourcePackage &package : m_request.localPackages) {
-            const QString prefixPath = QDir(m_installPath).filePath(QStringLiteral("deps/%1").arg(package.name));
-            flag.replace(QStringLiteral("${%1}").arg(package.name), prefixPath);
-        }
-        args << flag;
-    }
+    args << resolveLocalPackagePlaceholders(m_request.configureFlags, m_request.localPackages, m_installPath);
     runProcess(Step::Configuring, QDir(m_sourcePath).filePath(QStringLiteral("configure")), args, m_sourcePath);
 }
 
 void PhpBuildController::runMake()
 {
-    const int jobs = qMax(1, QThread::idealThreadCount());
+    const int jobs = phpBuildJobs();
     runProcess(Step::Building, QStringLiteral("make"), {QStringLiteral("-j%1").arg(jobs)}, m_sourcePath);
 }
 
@@ -470,8 +468,11 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
         packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/redis-6.3.0.tgz"));
         sourceDirectoryName = QStringLiteral("redis-6.3.0");
     } else if (extension == QStringLiteral("xdebug")) {
-        packageUrl = QUrl(QStringLiteral("https://xdebug.org/files/xdebug-3.5.1.tgz"));
-        sourceDirectoryName = QStringLiteral("xdebug-3.5.1");
+        const QString xdebugVersion = phpMajorVersion(m_request.version) == 7
+            ? QStringLiteral("3.1.6")
+            : QStringLiteral("3.5.1");
+        packageUrl = QUrl(QStringLiteral("https://xdebug.org/files/xdebug-%1.tgz").arg(xdebugVersion));
+        sourceDirectoryName = QStringLiteral("xdebug-%1").arg(xdebugVersion);
     } else {
         fail(QStringLiteral("Unsupported source PECL extension: %1").arg(extension));
         return;
@@ -490,7 +491,7 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
     }
 
     QNetworkRequest request(packageUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("PHPManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
@@ -538,7 +539,7 @@ void PhpBuildController::runPeclConfigure()
 
 void PhpBuildController::runPeclMake()
 {
-    const int jobs = qMax(1, QThread::idealThreadCount());
+    const int jobs = phpBuildJobs();
     runProcess(Step::BuildingPecl, QStringLiteral("make"), {QStringLiteral("-j%1").arg(jobs)}, m_peclSourcePath);
 }
 
@@ -589,8 +590,17 @@ void PhpBuildController::runProcess(Step step, const QString &program, const QSt
     emit progressChanged(progress);
     emit logLine(QStringLiteral("$ %1 %2").arg(program, arguments.join(' ')));
 
+    QString excludedLocalPackage;
+    if ((step == Step::ConfiguringLocalPackage
+         || step == Step::BuildingLocalPackage
+         || step == Step::InstallingLocalPackage)
+        && m_currentLocalPackageIndex >= 0
+        && m_currentLocalPackageIndex < m_request.localPackages.size()) {
+        excludedLocalPackage = m_request.localPackages.at(m_currentLocalPackageIndex).name;
+    }
+
     m_process.setWorkingDirectory(workingDirectory);
-    m_process.setProcessEnvironment(buildEnvironment());
+    m_process.setProcessEnvironment(phpBuildEnvironment(m_request, m_installPath, excludedLocalPackage));
     m_process.start(program, arguments);
     if (!m_process.waitForStarted(5000)) {
         fail(QStringLiteral("Cannot start %1: %2").arg(program, m_process.errorString()));
@@ -601,52 +611,6 @@ void PhpBuildController::runProcess(Step step, const QString &program, const QSt
         m_process.write("\n\n\n\n\n");
         m_process.closeWriteChannel();
     }
-}
-
-QProcessEnvironment PhpBuildController::buildEnvironment() const
-{
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-    QStringList pkgConfigPaths;
-    QStringList includeFlags;
-    QStringList libraryFlags;
-    QStringList libraryPaths;
-    QStringList binaryPaths;
-    QStringList cmakePrefixPaths;
-
-    for (const LocalSourcePackage &package : m_request.localPackages) {
-        const QString prefixPath = QDir(m_installPath).filePath(QStringLiteral("deps/%1").arg(package.name));
-        cmakePrefixPaths << prefixPath;
-        pkgConfigPaths << QDir(prefixPath).filePath(QStringLiteral("lib/pkgconfig"));
-        pkgConfigPaths << QDir(prefixPath).filePath(QStringLiteral("lib64/pkgconfig"));
-        includeFlags << QStringLiteral("-I%1").arg(QDir(prefixPath).filePath(QStringLiteral("include")));
-        libraryFlags << QStringLiteral("-L%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib")));
-        libraryFlags << QStringLiteral("-L%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib64")));
-        libraryFlags << QStringLiteral("-Wl,-rpath,%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib")));
-        libraryFlags << QStringLiteral("-Wl,-rpath,%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib64")));
-        libraryPaths << QDir(prefixPath).filePath(QStringLiteral("lib"));
-        libraryPaths << QDir(prefixPath).filePath(QStringLiteral("lib64"));
-        binaryPaths << QDir(prefixPath).filePath(QStringLiteral("bin"));
-    }
-
-    auto prepend = [&environment](const QString &name, const QStringList &values, const QString &separator) {
-        QStringList merged = values;
-        const QString existing = environment.value(name);
-        if (!existing.isEmpty()) {
-            merged << existing;
-        }
-        if (merged.isEmpty()) {
-            return;
-        }
-        environment.insert(name, merged.join(separator));
-    };
-
-    prepend(QStringLiteral("PKG_CONFIG_PATH"), pkgConfigPaths, QStringLiteral(":"));
-    prepend(QStringLiteral("CPPFLAGS"), includeFlags, QStringLiteral(" "));
-    prepend(QStringLiteral("LDFLAGS"), libraryFlags, QStringLiteral(" "));
-    prepend(QStringLiteral("LD_LIBRARY_PATH"), libraryPaths, QStringLiteral(":"));
-    prepend(QStringLiteral("PATH"), binaryPaths, QStringLiteral(":"));
-    prepend(QStringLiteral("CMAKE_PREFIX_PATH"), cmakePrefixPaths, QStringLiteral(":"));
-    return environment;
 }
 
 QString PhpBuildController::phpIniPath() const
@@ -674,23 +638,56 @@ bool PhpBuildController::writePhpIni(QString *errorMessage)
         return QString();
     };
 
+    auto phpReportsModule = [this](const QStringList &moduleNames) {
+        QProcess process;
+        process.setProgram(QDir(m_installPath).filePath(QStringLiteral("bin/php")));
+        process.setArguments({QStringLiteral("-n"), QStringLiteral("-m")});
+        process.setProcessEnvironment(phpBuildEnvironment(m_request, m_installPath));
+        process.start();
+        if (!process.waitForStarted(5000) || !process.waitForFinished(10000)) {
+            return false;
+        }
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+            return false;
+        }
+
+        const QString output = QString::fromLocal8Bit(process.readAllStandardOutput())
+            + QString::fromLocal8Bit(process.readAllStandardError());
+        const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &line : lines) {
+            const QString trimmed = line.trimmed();
+            for (const QString &moduleName : moduleNames) {
+                if (trimmed.compare(moduleName, Qt::CaseInsensitive) == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     QStringList lines;
-    lines << QStringLiteral("; Generated by PHPManager. Manual changes may be overwritten by the next rebuild.")
+    lines << QStringLiteral("; Generated by LangManager. Manual changes may be overwritten by the next rebuild.")
           << QStringLiteral("memory_limit=512M")
           << QStringLiteral("date.timezone=UTC");
 
     if (m_request.selectedModules.contains(QStringLiteral("OPcache"))) {
         const QString opcachePath = findInstalledExtension(QStringLiteral("opcache.so"));
-        if (opcachePath.isEmpty()) {
+        const bool hasBuiltInOpcache = opcachePath.isEmpty()
+            && phpReportsModule({QStringLiteral("Zend OPcache"), QStringLiteral("OPcache")});
+        if (opcachePath.isEmpty() && !hasBuiltInOpcache) {
             if (errorMessage) {
                 *errorMessage = QStringLiteral("OPcache was selected, but opcache.so was not installed.");
             }
             return false;
         }
         lines << QString()
-              << QStringLiteral("[opcache]")
-              << QStringLiteral("zend_extension=%1").arg(opcachePath)
-              << QStringLiteral("opcache.enable=1")
+              << QStringLiteral("[opcache]");
+        if (opcachePath.isEmpty()) {
+            emit logLine(QStringLiteral("OPcache is built into PHP; php.ini will not add zend_extension=opcache.so."));
+        } else {
+            lines << QStringLiteral("zend_extension=%1").arg(opcachePath);
+        }
+        lines << QStringLiteral("opcache.enable=1")
               << QStringLiteral("opcache.enable_cli=1")
               << QStringLiteral("opcache.memory_consumption=128")
               << QStringLiteral("opcache.interned_strings_buffer=16")
@@ -700,7 +697,7 @@ bool PhpBuildController::writePhpIni(QString *errorMessage)
     }
 
     if (!m_request.peclExtensions.isEmpty()) {
-        lines << QString() << QStringLiteral("[phpmanager-pecl]");
+        lines << QString() << QStringLiteral("[langmanager-pecl]");
         for (const QString &extension : m_request.peclExtensions) {
             const QString extensionPath = findInstalledExtension(QStringLiteral("%1.so").arg(extension));
             if (extensionPath.isEmpty()) {
@@ -784,7 +781,7 @@ bool PhpBuildController::writeInstallManifest(QString *errorMessage) const
     manifest.insert(QStringLiteral("localPackages"), localPackages);
 
     const QByteArray manifestBytes = QJsonDocument(manifest).toJson(QJsonDocument::Indented);
-    const QString versionManifestPath = QDir(m_installPath).filePath(QStringLiteral(".phpmanager.json"));
+    const QString versionManifestPath = QDir(m_installPath).filePath(QStringLiteral(".langmanager.json"));
     QSaveFile versionManifest(versionManifestPath);
     if (!versionManifest.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (errorMessage) {
@@ -840,24 +837,6 @@ bool PhpBuildController::writeInstallManifest(QString *errorMessage) const
     return true;
 }
 
-void PhpBuildController::cleanupSuccessfulBuildArtifacts()
-{
-    if (m_workRoot.isEmpty()) {
-        return;
-    }
-
-    QDir workDirectory(m_workRoot);
-    if (!workDirectory.exists()) {
-        return;
-    }
-
-    if (workDirectory.removeRecursively()) {
-        emit logLine(QStringLiteral("Removed build workspace: %1").arg(m_workRoot));
-    } else {
-        emit logLine(QStringLiteral("Warning: cannot remove build workspace: %1").arg(m_workRoot));
-    }
-}
-
 void PhpBuildController::markComplete()
 {
     QString phpIniError;
@@ -876,6 +855,11 @@ void PhpBuildController::markComplete()
     emit progressChanged(100);
     emit statusChanged(QStringLiteral("Ready"));
     emit logLine(QStringLiteral("PHP %1 is ready: %2/bin/php").arg(m_request.version, m_installPath));
-    cleanupSuccessfulBuildArtifacts();
+    for (const QString &line : BuildArtifactCleaner::cleanupInstalledRuntimeArtifacts(m_installPath)) {
+        emit logLine(line);
+    }
+    for (const QString &line : BuildArtifactCleaner::cleanupSuccessfulBuildArtifacts(m_workRoot)) {
+        emit logLine(line);
+    }
     emit finished(true, QStringLiteral("PHP %1 built successfully.").arg(m_request.version), m_installPath);
 }

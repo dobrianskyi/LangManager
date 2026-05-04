@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(PHPManager VERSION 0.1.0 LANGUAGES CXX)
+project(LangManager VERSION 0.1.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -13,12 +13,34 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 
-add_executable(PHPManager
+add_executable(LangManager
     src/main.cpp
     src/BuildCatalog.cpp
     src/BuildCatalog.h
+    src/BuildArtifactCleaner.cpp
+    src/BuildArtifactCleaner.h
+    src/CommandRunner.cpp
+    src/CommandRunner.h
+    src/FileDownloader.cpp
+    src/FileDownloader.h
+    src/GoDefaultSwitcher.cpp
+    src/GoDefaultSwitcher.h
+    src/GoInstallController.cpp
+    src/GoInstallController.h
+    src/GoVersionCatalog.cpp
+    src/GoVersionCatalog.h
+    src/PhpBuildEnvironment.cpp
+    src/PhpBuildEnvironment.h
     src/MainWindow.cpp
     src/MainWindow.h
+    src/PhpIniRepair.cpp
+    src/PhpIniRepair.h
+    src/PhpToolInstaller.cpp
+    src/PhpToolInstaller.h
+    src/PhpVersionCatalog.cpp
+    src/PhpVersionCatalog.h
+    src/ShellPathHelper.cpp
+    src/ShellPathHelper.h
     src/PhpDefaultSwitcher.cpp
     src/PhpDefaultSwitcher.h
     src/PhpBuildController.cpp
@@ -28,7 +50,7 @@ add_executable(PHPManager
     resources.qrc
 )
 
-target_link_libraries(PHPManager
+target_link_libraries(LangManager
     PRIVATE
         Qt6::Core
         Qt6::Widgets
@@ -36,32 +58,32 @@ target_link_libraries(PHPManager
         PkgConfig::LIBARCHIVE
 )
 
-add_custom_command(TARGET PHPManager POST_BUILD
+add_custom_command(TARGET LangManager POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/scripts/phpmanager
-        ${CMAKE_BINARY_DIR}/phpmanager
+        ${CMAKE_SOURCE_DIR}/scripts/langmanager
+        ${CMAKE_BINARY_DIR}/langmanager
 )
 
-install(TARGETS PHPManager
+install(TARGETS LangManager
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(PROGRAMS scripts/phpmanager
+install(PROGRAMS scripts/langmanager
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES packaging/linux/phpmanager.desktop
+install(FILES packaging/linux/langmanager.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
 )
 
 foreach(icon_size 16 32 48 64 128 256 512)
-    install(FILES assets/icons/phpmanager-${icon_size}.png
+    install(FILES assets/icons/langmanager-${icon_size}.png
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps
-        RENAME phpmanager.png
+        RENAME langmanager.png
     )
 endforeach()
 
-install(FILES assets/phpmanager-icon.svg
+install(FILES assets/langmanager-icon.svg
     DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
-    RENAME phpmanager.svg
+    RENAME langmanager.svg
 )
