@@ -387,7 +387,7 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         }, QStringLiteral("cmake")));
     }
     if (localPackageNames.contains(QStringLiteral("gmp"))) {
-        addPackageOnce(sourcePackage(QStringLiteral("gmp"), QStringLiteral("https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz"), QStringLiteral("gmp-6.3.0"), {
+        addPackageOnce(sourcePackage(QStringLiteral("gmp"), QStringLiteral("https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz"), QStringLiteral("gmp-6.3.0"), {
             QStringLiteral("--enable-shared"),
             QStringLiteral("--disable-static"),
             QStringLiteral("CFLAGS=-std=gnu17 -O0 -g0 -pipe"),
