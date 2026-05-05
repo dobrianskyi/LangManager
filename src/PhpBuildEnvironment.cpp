@@ -57,6 +57,12 @@ QProcessEnvironment phpBuildEnvironment(const PhpBuildRequest &request, const QS
         binaryPaths << QDir(prefixPath).filePath(QStringLiteral("bin"));
     }
 
+    if (!excludedLocalPackage.isEmpty()) {
+        const QString prefixPath = QDir(installPath).filePath(QStringLiteral("deps/%1").arg(excludedLocalPackage));
+        libraryFlags << QStringLiteral("-Wl,-rpath,%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib")));
+        libraryFlags << QStringLiteral("-Wl,-rpath,%1").arg(QDir(prefixPath).filePath(QStringLiteral("lib64")));
+    }
+
     if (phpMajorVersion(request.version) == 7) {
         cFlags << QStringLiteral("-std=gnu99");
     }
