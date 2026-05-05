@@ -403,7 +403,7 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         addPackageOnce(sourcePackage(QStringLiteral("rabbitmq-c"), QStringLiteral("https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v0.15.0.tar.gz"), QStringLiteral("rabbitmq-c-0.15.0"), {
             QStringLiteral("-DBUILD_EXAMPLES=OFF"),
             QStringLiteral("-DBUILD_STATIC_LIBS=OFF"),
-            QStringLiteral("-DBUILD_TESTS=OFF"),
+            QStringLiteral("-DBUILD_TESTING=OFF"),
             QStringLiteral("-DBUILD_TOOLS=OFF"),
             QStringLiteral("-DENABLE_SSL_SUPPORT=ON"),
         }, QStringLiteral("cmake")));
