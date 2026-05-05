@@ -448,10 +448,19 @@ void PhpBuildController::runNextPeclExtension()
     if (extension == QStringLiteral("igbinary")) {
         beginPeclDownload(extension);
         return;
+    } else if (extension == QStringLiteral("amqp")) {
+        beginPeclDownload(extension);
+        return;
+    } else if (extension == QStringLiteral("grpc")) {
+        beginPeclDownload(extension);
+        return;
     } else if (extension == QStringLiteral("redis")) {
         beginPeclDownload(extension);
         return;
     } else if (extension == QStringLiteral("xdebug")) {
+        beginPeclDownload(extension);
+        return;
+    } else if (extension == QStringLiteral("imagick")) {
         beginPeclDownload(extension);
         return;
     }
@@ -470,6 +479,12 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
     if (extension == QStringLiteral("igbinary")) {
         packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/igbinary-3.2.16.tgz"));
         sourceDirectoryName = QStringLiteral("igbinary-3.2.16");
+    } else if (extension == QStringLiteral("amqp")) {
+        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/amqp-2.2.0.tgz"));
+        sourceDirectoryName = QStringLiteral("amqp-2.2.0");
+    } else if (extension == QStringLiteral("grpc")) {
+        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/grpc-1.80.0.tgz"));
+        sourceDirectoryName = QStringLiteral("grpc-1.80.0");
     } else if (extension == QStringLiteral("redis")) {
         packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/redis-6.3.0.tgz"));
         sourceDirectoryName = QStringLiteral("redis-6.3.0");
@@ -479,6 +494,9 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
             : QStringLiteral("3.5.1");
         packageUrl = QUrl(QStringLiteral("https://xdebug.org/files/xdebug-%1.tgz").arg(xdebugVersion));
         sourceDirectoryName = QStringLiteral("xdebug-%1").arg(xdebugVersion);
+    } else if (extension == QStringLiteral("imagick")) {
+        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/imagick-3.8.1.tgz"));
+        sourceDirectoryName = QStringLiteral("imagick-3.8.1");
     } else {
         fail(QStringLiteral("Unsupported source PECL extension: %1").arg(extension));
         return;
