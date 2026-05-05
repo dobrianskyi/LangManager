@@ -556,9 +556,16 @@ void PhpBuildController::runPeclPhpize()
 
 void PhpBuildController::runPeclConfigure()
 {
-    runProcess(Step::ConfiguringPecl, QDir(m_peclSourcePath).filePath(QStringLiteral("configure")), {
+    QStringList args = {
         QStringLiteral("--with-php-config=%1").arg(QDir(m_installPath).filePath(QStringLiteral("bin/php-config"))),
-    }, m_peclSourcePath);
+    };
+
+    if (m_currentPeclIndex >= 0 && m_currentPeclIndex < m_request.peclExtensions.size()
+        && m_request.peclExtensions.at(m_currentPeclIndex) == QStringLiteral("imagick")) {
+        args << QStringLiteral("--with-imagick=%1").arg(QDir(m_installPath).filePath(QStringLiteral("deps/imagemagick")));
+    }
+
+    runProcess(Step::ConfiguringPecl, QDir(m_peclSourcePath).filePath(QStringLiteral("configure")), args, m_peclSourcePath);
 }
 
 void PhpBuildController::runPeclMake()
