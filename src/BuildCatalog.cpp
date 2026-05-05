@@ -126,21 +126,24 @@ QList<ModuleDefinition> allModuleDefinitions()
         {QStringLiteral("PDO SQLite"), QStringLiteral("--with-pdo-sqlite=${sqlite}"), {}, QStringLiteral("sqlite"), true},
         {QStringLiteral("SQLite3"), QStringLiteral("--with-sqlite3=${sqlite}"), {}, QStringLiteral("sqlite"), true},
         {QStringLiteral("ZIP"), QStringLiteral("--with-zip=${libzip}"), {}, QStringLiteral("libzip"), true},
+        {QStringLiteral("igbinary (PECL)"), {}, QStringLiteral("igbinary"), {}, true},
         {QStringLiteral("Redis (PECL)"), {}, QStringLiteral("redis"), {}, true},
+        {QStringLiteral("AMQP (PECL)"), {}, QStringLiteral("amqp"), QStringLiteral("rabbitmq-c"), true},
+        {QStringLiteral("gRPC (PECL)"), {}, QStringLiteral("grpc"), {}, true},
         {QStringLiteral("Xdebug (PECL)"), {}, QStringLiteral("xdebug"), {}, true},
         {QStringLiteral("BCMath"), QStringLiteral("--enable-bcmath"), {}, {}, true},
         {QStringLiteral("Calendar"), QStringLiteral("--enable-calendar"), {}, {}, true},
         {QStringLiteral("Exif"), QStringLiteral("--enable-exif"), {}, {}, true},
         {QStringLiteral("Fileinfo"), QStringLiteral("--enable-fileinfo"), {}, {}, true},
-        {QStringLiteral("FTP"), QStringLiteral("--enable-ftp"), {}, {}, false},
+        {QStringLiteral("FTP"), QStringLiteral("--enable-ftp"), {}, {}, true},
         {QStringLiteral("PCNTL"), QStringLiteral("--enable-pcntl"), {}, {}, false},
         {QStringLiteral("Phar"), QStringLiteral("--enable-phar"), {}, {}, true},
         {QStringLiteral("POSIX"), QStringLiteral("--enable-posix"), {}, {}, true},
         {QStringLiteral("Readline"), QStringLiteral("--with-readline"), {}, {}, false},
         {QStringLiteral("Shmop"), QStringLiteral("--enable-shmop"), {}, {}, false},
-        {QStringLiteral("Soap"), QStringLiteral("--enable-soap"), {}, {}, false},
+        {QStringLiteral("Soap"), QStringLiteral("--enable-soap"), {}, QStringLiteral("libxml2"), true},
         {QStringLiteral("Sockets"), QStringLiteral("--enable-sockets"), {}, {}, true},
-        {QStringLiteral("Sodium"), QStringLiteral("--with-sodium"), {}, {}, false},
+        {QStringLiteral("Sodium"), QStringLiteral("--with-sodium=${libsodium}"), {}, QStringLiteral("libsodium"), true},
         {QStringLiteral("SysV Msg"), QStringLiteral("--enable-sysvmsg"), {}, {}, false},
         {QStringLiteral("SysV Sem"), QStringLiteral("--enable-sysvsem"), {}, {}, false},
         {QStringLiteral("SysV Shm"), QStringLiteral("--enable-sysvshm"), {}, {}, false},
@@ -154,8 +157,8 @@ QList<ModuleDefinition> allModuleDefinitions()
         {QStringLiteral("FFI"), QStringLiteral("--with-ffi"), {}, {}, false},
         {QStringLiteral("GD"), QStringLiteral("--enable-gd"), {}, QStringLiteral("gd"), true},
         {QStringLiteral("Gettext"), QStringLiteral("--with-gettext"), {}, {}, false},
-        {QStringLiteral("GMP"), QStringLiteral("--with-gmp"), {}, {}, false},
-        {QStringLiteral("Imagick (PECL)"), {}, QStringLiteral("imagick"), {}, false},
+        {QStringLiteral("GMP"), QStringLiteral("--with-gmp=${gmp}"), {}, QStringLiteral("gmp"), true},
+        {QStringLiteral("Imagick (PECL)"), {}, QStringLiteral("imagick"), QStringLiteral("imagemagick"), true},
         {QStringLiteral("LDAP"), QStringLiteral("--with-ldap"), {}, {}, false},
         {QStringLiteral("Memcached (PECL)"), {}, QStringLiteral("memcached"), {}, false},
         {QStringLiteral("MongoDB (PECL)"), {}, QStringLiteral("mongodb"), {}, false},
@@ -192,19 +195,27 @@ QList<BuildProfileDefinition> allBuildProfiles()
         QStringLiteral("PDO SQLite"),
         QStringLiteral("SQLite3"),
         QStringLiteral("ZIP"),
+        QStringLiteral("igbinary (PECL)"),
         QStringLiteral("Redis (PECL)"),
+        QStringLiteral("AMQP (PECL)"),
+        QStringLiteral("gRPC (PECL)"),
         QStringLiteral("Xdebug (PECL)"),
         QStringLiteral("BCMath"),
         QStringLiteral("Calendar"),
         QStringLiteral("Exif"),
         QStringLiteral("Fileinfo"),
+        QStringLiteral("FTP"),
         QStringLiteral("Phar"),
         QStringLiteral("POSIX"),
+        QStringLiteral("Soap"),
+        QStringLiteral("Sodium"),
         QStringLiteral("Sockets"),
         QStringLiteral("XML"),
         QStringLiteral("XMLReader"),
         QStringLiteral("XMLWriter"),
         QStringLiteral("GD"),
+        QStringLiteral("GMP"),
+        QStringLiteral("Imagick (PECL)"),
     };
 
     QStringList full;
@@ -340,7 +351,8 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
         addPackageOnce(sourcePackage(QStringLiteral("libpng"), QStringLiteral("https://downloads.sourceforge.net/project/libpng/libpng16/1.6.58/libpng-1.6.58.tar.gz"), QStringLiteral("libpng-1.6.58")));
     }
     if (localPackageNames.contains(QStringLiteral("openssl"))
-        || localPackageNames.contains(QStringLiteral("curl"))) {
+        || localPackageNames.contains(QStringLiteral("curl"))
+        || localPackageNames.contains(QStringLiteral("rabbitmq-c"))) {
         addPackageOnce(opensslSourcePackageForPhpVersion(version));
     }
     if (localPackageNames.contains(QStringLiteral("curl"))) {
@@ -373,6 +385,55 @@ PhpBuildRequest createBuildRequest(const QString &version, const QString &instal
             QStringLiteral("-DENABLE_LZMA=OFF"),
             QStringLiteral("-DENABLE_ZSTD=OFF"),
         }, QStringLiteral("cmake")));
+    }
+    if (localPackageNames.contains(QStringLiteral("gmp"))) {
+        addPackageOnce(sourcePackage(QStringLiteral("gmp"), QStringLiteral("https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz"), QStringLiteral("gmp-6.3.0"), {
+            QStringLiteral("--enable-shared"),
+            QStringLiteral("--disable-static"),
+        }));
+    }
+    if (localPackageNames.contains(QStringLiteral("libsodium"))) {
+        addPackageOnce(sourcePackage(QStringLiteral("libsodium"), QStringLiteral("https://download.libsodium.org/libsodium/releases/libsodium-1.0.20.tar.gz"), QStringLiteral("libsodium-1.0.20"), {
+            QStringLiteral("--enable-shared"),
+            QStringLiteral("--disable-static"),
+        }));
+    }
+    if (localPackageNames.contains(QStringLiteral("rabbitmq-c"))) {
+        addPackageOnce(sourcePackage(QStringLiteral("rabbitmq-c"), QStringLiteral("https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v0.15.0.tar.gz"), QStringLiteral("rabbitmq-c-0.15.0"), {
+            QStringLiteral("-DBUILD_EXAMPLES=OFF"),
+            QStringLiteral("-DBUILD_STATIC_LIBS=OFF"),
+            QStringLiteral("-DBUILD_TESTS=OFF"),
+            QStringLiteral("-DBUILD_TOOLS=OFF"),
+            QStringLiteral("-DENABLE_SSL_SUPPORT=ON"),
+        }, QStringLiteral("cmake")));
+    }
+    if (localPackageNames.contains(QStringLiteral("imagemagick"))) {
+        addPackageOnce(sourcePackage(QStringLiteral("imagemagick"), QStringLiteral("https://imagemagick.org/archive/ImageMagick-7.1.2-21.tar.xz"), QStringLiteral("ImageMagick-7.1.2-21"), {
+            QStringLiteral("--disable-docs"),
+            QStringLiteral("--disable-static"),
+            QStringLiteral("--enable-shared"),
+            QStringLiteral("--without-dps"),
+            QStringLiteral("--without-fftw"),
+            QStringLiteral("--without-freetype"),
+            QStringLiteral("--without-heic"),
+            QStringLiteral("--without-jbig"),
+            QStringLiteral("--without-jpeg"),
+            QStringLiteral("--without-lcms"),
+            QStringLiteral("--without-lqr"),
+            QStringLiteral("--without-magick-plus-plus"),
+            QStringLiteral("--without-openexr"),
+            QStringLiteral("--without-pango"),
+            QStringLiteral("--without-perl"),
+            QStringLiteral("--without-png"),
+            QStringLiteral("--without-raqm"),
+            QStringLiteral("--without-tiff"),
+            QStringLiteral("--without-webp"),
+            QStringLiteral("--without-wmf"),
+            QStringLiteral("--without-x"),
+            QStringLiteral("--without-xml"),
+            QStringLiteral("--without-zlib"),
+            QStringLiteral("--with-modules=no"),
+        }));
     }
     if (localPackageNames.contains(QStringLiteral("postgresql"))) {
         addPackageOnce(sourcePackage(QStringLiteral("postgresql"), QStringLiteral("https://ftp.postgresql.org/pub/source/v17.9/postgresql-17.9.tar.gz"), QStringLiteral("postgresql-17.9"), {

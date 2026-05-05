@@ -90,6 +90,10 @@ The same model is used for many common dependencies:
 - `XML`, `XMLReader`, `XMLWriter`, and `SimpleXML` use a local libxml2 build;
 - `Intl` uses a local ICU build;
 - `mbstring` uses a local oniguruma build;
+- `GMP` uses a local GMP build;
+- `Sodium` uses a local libsodium build;
+- `AMQP` uses a local rabbitmq-c build;
+- `Imagick` uses a local ImageMagick build;
 - `ZIP` uses a local libzip build;
 - `SQLite3` and `PDO SQLite` use a local SQLite build;
 - `GD` uses local zlib, jpeg, and libpng builds;
@@ -284,19 +288,27 @@ The default profile. It includes Symfony Required plus modules commonly needed b
 - PDO SQLite;
 - SQLite3;
 - ZIP;
+- igbinary through PECL;
 - Redis through PECL;
+- AMQP through PECL;
+- gRPC through PECL;
 - Xdebug through PECL;
 - BCMath;
 - Calendar;
 - Exif;
 - Fileinfo;
+- FTP;
 - Phar;
 - POSIX;
+- Soap;
+- Sodium;
 - Sockets;
 - XML;
 - XMLReader;
 - XMLWriter;
-- GD.
+- GD;
+- GMP;
+- Imagick through PECL.
 
 ### Full
 
@@ -308,7 +320,7 @@ Modules fall into several categories:
 
 - built-in PHP modules enabled by configure flags, for example `--enable-mbstring`;
 - modules with external native dependencies, for example `--with-curl=${curl}`;
-- PECL extensions such as `redis`, `xdebug`, `apcu`, `imagick`, `mongodb`, `swoole`, and `yaml`;
+- PECL extensions such as `redis`, `xdebug`, `amqp`, `grpc`, `igbinary`, `apcu`, `imagick`, `mongodb`, `swoole`, and `yaml`;
 - uncommon extensions that are disabled by default because they are heavier or more specialized.
 
 PECL extensions are installed after `make install`, because they need the installed `phpize`, `php-config`, and PHP prefix. For some PECL packages, the project uses direct archive URLs to make the process more predictable.
