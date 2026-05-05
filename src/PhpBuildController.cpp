@@ -445,7 +445,10 @@ void PhpBuildController::runNextPeclExtension()
     }
 
     const QString extension = m_request.peclExtensions.at(m_currentPeclIndex);
-    if (extension == QStringLiteral("redis")) {
+    if (extension == QStringLiteral("igbinary")) {
+        beginPeclDownload(extension);
+        return;
+    } else if (extension == QStringLiteral("redis")) {
         beginPeclDownload(extension);
         return;
     } else if (extension == QStringLiteral("xdebug")) {
@@ -464,7 +467,10 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
 {
     QUrl packageUrl;
     QString sourceDirectoryName;
-    if (extension == QStringLiteral("redis")) {
+    if (extension == QStringLiteral("igbinary")) {
+        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/igbinary-3.2.16.tgz"));
+        sourceDirectoryName = QStringLiteral("igbinary-3.2.16");
+    } else if (extension == QStringLiteral("redis")) {
         packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/redis-6.3.0.tgz"));
         sourceDirectoryName = QStringLiteral("redis-6.3.0");
     } else if (extension == QStringLiteral("xdebug")) {
