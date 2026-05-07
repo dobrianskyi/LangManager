@@ -145,7 +145,7 @@ void GoInstallController::beginDownload()
     }
 
     QNetworkRequest request(m_request.archiveUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &GoInstallController::onDownloadReadyRead);

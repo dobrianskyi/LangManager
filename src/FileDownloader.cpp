@@ -12,7 +12,7 @@ bool downloadToFile(const QUrl &url, const QString &path, QString *errorMessage)
 {
     QNetworkAccessManager network;
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 
     QNetworkReply *reply = network.get(request);

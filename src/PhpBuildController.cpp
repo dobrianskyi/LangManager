@@ -256,7 +256,7 @@ void PhpBuildController::beginDownload()
     }
 
     QNetworkRequest request(m_request.sourceUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
@@ -330,7 +330,7 @@ void PhpBuildController::beginLocalPackageDownload()
     }
 
     QNetworkRequest request(package.sourceUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
@@ -515,7 +515,7 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
     }
 
     QNetworkRequest request(packageUrl);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.1 QtNetwork"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     m_reply = m_network.get(request);
     connect(m_reply, &QNetworkReply::readyRead, this, &PhpBuildController::onDownloadReadyRead);
