@@ -32,6 +32,7 @@
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QMessageBox>
+#include <QNetworkRequest>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -42,6 +43,9 @@
 #include <QTextStream>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QVersionNumber>
+
+#include <algorithm>
 
 namespace {
 
@@ -49,6 +53,148 @@ constexpr int ManifestRole = Qt::UserRole + 1;
 constexpr int BuildVersionRole = Qt::UserRole + 2;
 constexpr int ChannelRole = Qt::UserRole + 3;
 const QColor InstalledGreen(31, 122, 63);
+
+const QUrl PhpActiveReleasesUrl(QStringLiteral("https://www.php.net/releases/active.php"));
+
+bool isValidPhpChannel(const QString &channel)
+{
+    const QStringList parts = channel.split('.');
+    if (parts.size() != 2) {
+        return false;
+    }
+    bool majorOk = false;
+    bool minorOk = false;
+    parts.at(0).toInt(&majorOk);
+    parts.at(1).toInt(&minorOk);
+    return majorOk && minorOk;
+}
+
+void sortPhpChannels(QList<PhpChannel> *channels)
+{
+    std::sort(channels->begin(), channels->end(), [](const PhpChannel &left, const PhpChannel &right) {
+        return QVersionNumber::compare(QVersionNumber::fromString(left.channel), QVersionNumber::fromString(right.channel)) > 0;
+    });
+}
+
+bool phpVersionLessThan(const QString &left, const QString &right)
+{
+    return QVersionNumber::compare(QVersionNumber::fromString(left), QVersionNumber::fromString(right)) < 0;
+}
+
+QList<PhpChannel> mergePhpChannels(const QList<PhpChannel> &base, const QList<PhpChannel> &updates)
+{
+    QHash<QString, PhpChannel> byChannel;
+    for (const PhpChannel &channel : base) {
+        byChannel.insert(channel.channel, channel);
+    }
+    for (const PhpChannel &channel : updates) {
+        byChannel.insert(channel.channel, channel);
+    }
+
+    QList<PhpChannel> merged = byChannel.values();
+    sortPhpChannels(&merged);
+    return merged;
+}
+
+QList<PhpChannel> phpChannelsFromActiveReleases(const QByteArray &payload, QString *errorMessage)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Cannot parse php.net release JSON: %1").arg(parseError.errorString());
+        }
+        return {};
+    }
+
+    QList<PhpChannel> channels;
+    auto addRelease = [&channels](const QString &fallbackChannel, const QJsonObject &release) {
+        const QString version = release.value(QStringLiteral("version")).toString();
+        const QString channel = isValidPhpChannel(fallbackChannel) ? fallbackChannel : phpChannelFromVersion(version);
+        if (!version.isEmpty() && isValidPhpChannel(channel) && version.startsWith(channel + QLatin1Char('.'))) {
+            channels.append({channel, version});
+        }
+    };
+
+    const QJsonObject root = document.object();
+    for (auto majorIt = root.constBegin(); majorIt != root.constEnd(); ++majorIt) {
+        const QJsonObject majorObject = majorIt.value().toObject();
+        if (majorObject.isEmpty()) {
+            continue;
+        }
+        if (majorObject.contains(QStringLiteral("version"))) {
+            addRelease(majorIt.key(), majorObject);
+            continue;
+        }
+        for (auto channelIt = majorObject.constBegin(); channelIt != majorObject.constEnd(); ++channelIt) {
+            addRelease(channelIt.key(), channelIt.value().toObject());
+        }
+    }
+
+    if (channels.isEmpty() && errorMessage) {
+        *errorMessage = QStringLiteral("php.net release JSON did not contain PHP versions.");
+    }
+    return mergePhpChannels({}, channels);
+}
+
+QString phpChannelsCachePath()
+{
+    const QString configRoot = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return QDir(configRoot).filePath(QStringLiteral("php-channels.json"));
+}
+
+QList<PhpChannel> loadPhpChannels()
+{
+    QList<PhpChannel> channels = availablePhpChannels();
+
+    QFile cacheFile(phpChannelsCachePath());
+    if (!cacheFile.open(QIODevice::ReadOnly)) {
+        sortPhpChannels(&channels);
+        return channels;
+    }
+
+    QList<PhpChannel> cachedChannels;
+    const QJsonDocument document = QJsonDocument::fromJson(cacheFile.readAll());
+    for (const QJsonValue &value : document.array()) {
+        const QJsonObject object = value.toObject();
+        const QString channel = object.value(QStringLiteral("channel")).toString();
+        const QString buildVersion = object.value(QStringLiteral("buildVersion")).toString();
+        if (!buildVersion.isEmpty() && isValidPhpChannel(channel)) {
+            cachedChannels.append({channel, buildVersion});
+        }
+    }
+    return mergePhpChannels(channels, cachedChannels);
+}
+
+bool savePhpChannels(const QList<PhpChannel> &channels, QString *errorMessage)
+{
+    const QString path = phpChannelsCachePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    QJsonArray array;
+    for (const PhpChannel &channel : channels) {
+        QJsonObject object;
+        object.insert(QStringLiteral("channel"), channel.channel);
+        object.insert(QStringLiteral("buildVersion"), channel.buildVersion);
+        array.append(object);
+    }
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMessage) {
+            *errorMessage = file.errorString();
+        }
+        return false;
+    }
+    file.write(QJsonDocument(array).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        if (errorMessage) {
+            *errorMessage = file.errorString();
+        }
+        return false;
+    }
+    return true;
+}
 
 QString goSymlinkPath(const QString &installBasePath, const QString &defaultBinPath)
 {
@@ -85,6 +231,7 @@ QString goDefaultSummaryText(const QString &installBasePath, const QString &defa
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , m_phpChannels(loadPhpChannels())
 {
     buildUi();
 
@@ -684,6 +831,94 @@ void MainWindow::refreshToolStatus()
     }
 }
 
+void MainWindow::refreshPhpVersionsFromNetwork()
+{
+    if (m_controller.isRunning() || m_phpVersionsReply) {
+        return;
+    }
+
+    appendLogLine(QStringLiteral("Checking PHP releases: %1").arg(PhpActiveReleasesUrl.toString()));
+    if (m_statusLabel) {
+        m_statusLabel->setText(QStringLiteral("Checking PHP releases"));
+    }
+    if (m_refreshPhpVersionsButton) {
+        m_refreshPhpVersionsButton->setEnabled(false);
+        m_refreshPhpVersionsButton->setText(QStringLiteral("Updating..."));
+    }
+
+    QNetworkRequest request(PhpActiveReleasesUrl);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("LangManager/0.2 QtNetwork"));
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    m_phpVersionsReply = m_phpVersionsNetwork.get(request);
+    connect(m_phpVersionsReply, &QNetworkReply::finished, this, &MainWindow::onPhpVersionsReplyFinished);
+}
+
+void MainWindow::onPhpVersionsReplyFinished()
+{
+    QNetworkReply *reply = m_phpVersionsReply;
+    m_phpVersionsReply = nullptr;
+
+    auto resetButton = [this]() {
+        if (m_refreshPhpVersionsButton) {
+            m_refreshPhpVersionsButton->setEnabled(!m_controller.isRunning());
+            m_refreshPhpVersionsButton->setText(QStringLiteral("Update versions"));
+        }
+    };
+
+    if (!reply) {
+        resetButton();
+        return;
+    }
+
+    const QByteArray payload = reply->readAll();
+    const QNetworkReply::NetworkError networkError = reply->error();
+    const QString networkErrorString = reply->errorString();
+    reply->deleteLater();
+
+    if (networkError != QNetworkReply::NoError) {
+        resetButton();
+        if (m_statusLabel) {
+            m_statusLabel->setText(QStringLiteral("PHP release check failed"));
+        }
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Cannot update PHP versions"),
+            QStringLiteral("php.net request failed: %1").arg(networkErrorString));
+        return;
+    }
+
+    QString parseError;
+    const QList<PhpChannel> remoteChannels = phpChannelsFromActiveReleases(payload, &parseError);
+    if (remoteChannels.isEmpty()) {
+        resetButton();
+        if (m_statusLabel) {
+            m_statusLabel->setText(QStringLiteral("PHP release check failed"));
+        }
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Cannot update PHP versions"),
+            parseError.isEmpty() ? QStringLiteral("php.net did not return any PHP versions.") : parseError);
+        return;
+    }
+
+    m_phpChannels = mergePhpChannels(m_phpChannels, remoteChannels);
+    QString saveError;
+    if (!savePhpChannels(m_phpChannels, &saveError)) {
+        appendLogLine(QStringLiteral("Could not save PHP release cache: %1").arg(saveError));
+    }
+
+    QStringList versions;
+    for (const PhpChannel &channel : remoteChannels) {
+        versions << QStringLiteral("%1 -> %2").arg(channel.channel, channel.buildVersion);
+    }
+    appendLogLine(QStringLiteral("Updated PHP releases: %1").arg(versions.join(QStringLiteral(", "))));
+    if (m_statusLabel) {
+        m_statusLabel->setText(QStringLiteral("PHP releases updated"));
+    }
+    resetButton();
+    refreshInstalledVersions();
+}
+
 void MainWindow::showVersionContextMenu(const QPoint &position)
 {
     if (!m_versionsList || m_controller.isRunning()) {
@@ -863,12 +1098,16 @@ void MainWindow::buildUi()
     m_currentPhpLabel->setWordWrap(true);
     m_fixPathButton = new QPushButton(QStringLiteral("Fix PATH"), versionsBox);
     m_fixPathButton->setVisible(false);
+    m_refreshPhpVersionsButton = new QPushButton(QStringLiteral("Update versions"), versionsBox);
     m_versionsList = new QListWidget(versionsBox);
     m_versionsList->setUniformItemSizes(true);
     m_versionsList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_versionsList->setContextMenuPolicy(Qt::CustomContextMenu);
+    auto *versionsActionRow = new QHBoxLayout();
+    versionsActionRow->addWidget(m_fixPathButton);
+    versionsActionRow->addWidget(m_refreshPhpVersionsButton, 1);
     versionsBoxLayout->addWidget(m_currentPhpLabel);
-    versionsBoxLayout->addWidget(m_fixPathButton);
+    versionsBoxLayout->addLayout(versionsActionRow);
     versionsBoxLayout->addWidget(m_versionsList, 1);
 
     auto *buttonRow = new QHBoxLayout();
@@ -1163,6 +1402,7 @@ void MainWindow::buildUi()
     connect(m_setVersionDefaultButton, &QPushButton::clicked, this, &MainWindow::setSelectedVersionAsDefault);
     connect(m_removeVersionButton, &QPushButton::clicked, this, &MainWindow::removeSelectedVersion);
     connect(m_fixPathButton, &QPushButton::clicked, this, &MainWindow::fixPathForCurrentDefault);
+    connect(m_refreshPhpVersionsButton, &QPushButton::clicked, this, &MainWindow::refreshPhpVersionsFromNetwork);
     connect(m_buildProfileCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::applyBuildProfile);
     connect(m_installComposerButton, &QPushButton::clicked, this, &MainWindow::installComposerCli);
     connect(m_installSymfonyButton, &QPushButton::clicked, this, &MainWindow::installSymfonyCli);
@@ -1192,8 +1432,7 @@ void MainWindow::appendLogLine(const QString &line)
 QString MainWindow::selectedVersion() const
 {
     if (!m_versionsList || !m_versionsList->currentItem()) {
-        const QList<PhpChannel> channels = availablePhpChannels();
-        return channels.isEmpty() ? QString() : channels.first().buildVersion;
+        return m_phpChannels.isEmpty() ? QString() : m_phpChannels.first().buildVersion;
     }
     return m_versionsList->currentItem()->data(BuildVersionRole).toString();
 }
@@ -1319,7 +1558,7 @@ void MainWindow::refreshInstalledVersions()
     }
 
     int selectedRow = 0;
-    const QList<PhpChannel> channels = availablePhpChannels();
+    const QList<PhpChannel> channels = m_phpChannels;
     for (int i = 0; i < channels.size(); ++i) {
         const PhpChannel channel = channels.at(i);
         QJsonObject manifest = manifestsByChannel.value(channel.channel);
@@ -1337,7 +1576,9 @@ void MainWindow::refreshInstalledVersions()
         manifest.insert(QStringLiteral("isDefault"), isDefault);
         QString label;
         if (installed) {
-            label = QStringLiteral("PHP %1  (%2 installed)").arg(channel.channel, version);
+            label = phpVersionLessThan(version, channel.buildVersion)
+                ? QStringLiteral("PHP %1  (%2 installed, %3 available)").arg(channel.channel, version, channel.buildVersion)
+                : QStringLiteral("PHP %1  (%2 installed)").arg(channel.channel, version);
         } else {
             label = QStringLiteral("PHP %1  (not installed)").arg(channel.channel);
         }
@@ -1505,12 +1746,19 @@ void MainWindow::updateSelectedVersionDetails()
     QStringList details;
     if (installed) {
         const QString phpBinary = manifest.value(QStringLiteral("phpBinary")).toString();
+        const QString installedVersion = manifest.value(QStringLiteral("version")).toString();
+        const bool updateAvailable = phpVersionLessThan(installedVersion, buildVersion);
         m_selectedVersionStatusLabel->setText(isDefault
-            ? QStringLiteral("Installed and selected as default PHP")
-            : QStringLiteral("Installed"));
+            ? (updateAvailable
+                ? QStringLiteral("Installed and selected as default PHP. Update available: %1").arg(buildVersion)
+                : QStringLiteral("Installed and selected as default PHP"))
+            : (updateAvailable
+                ? QStringLiteral("Installed. Update available: %1").arg(buildVersion)
+                : QStringLiteral("Installed")));
         m_selectedVersionStatusLabel->setStyleSheet(QStringLiteral("color: #1f7a3f; font-weight: 600;"));
 
-        details << QStringLiteral("Installed version: %1").arg(manifest.value(QStringLiteral("version")).toString());
+        details << QStringLiteral("Installed version: %1").arg(installedVersion);
+        details << QStringLiteral("Available build version: %1").arg(buildVersion);
         details << QStringLiteral("Install path: %1").arg(manifest.value(QStringLiteral("installPath")).toString());
         details << QStringLiteral("PHP binary: %1").arg(phpBinary);
         details << QStringLiteral("Installed at: %1").arg(manifest.value(QStringLiteral("installedAtUtc")).toString());
@@ -1531,8 +1779,11 @@ void MainWindow::updateSelectedVersionDetails()
     }
 
     m_selectedVersionDetailsEdit->setPlainText(details.join('\n'));
+    const QString installedVersion = manifest.value(QStringLiteral("version")).toString();
     m_installVersionButton->setText(installed
-        ? QStringLiteral("Rebuild PHP %1").arg(channel)
+        ? (phpVersionLessThan(installedVersion, buildVersion)
+            ? QStringLiteral("Update PHP %1 to %2").arg(channel, buildVersion)
+            : QStringLiteral("Rebuild PHP %1").arg(channel))
         : QStringLiteral("Install PHP %1").arg(channel));
     m_setVersionDefaultButton->setEnabled(installed && !isDefault && !m_controller.isRunning());
     m_removeVersionButton->setEnabled(installed && !m_controller.isRunning());
@@ -1595,6 +1846,9 @@ void MainWindow::setRunning(bool running)
     m_browseButton->setEnabled(!running && custom);
     m_versionsList->setEnabled(!running);
     m_installVersionButton->setEnabled(!running);
+    if (m_refreshPhpVersionsButton) {
+        m_refreshPhpVersionsButton->setEnabled(!running && !m_phpVersionsReply);
+    }
     m_cancelButton->setEnabled(running);
     if (m_fixPathButton) {
         m_fixPathButton->setEnabled(!running && !m_currentDefaultBinPath.isEmpty() && !pathContainsDirectory(m_currentDefaultBinPath));

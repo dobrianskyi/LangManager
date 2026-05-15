@@ -25,6 +25,18 @@ int phpMajorVersion(const QString &version)
     return ok ? major : 0;
 }
 
+bool phpVersionAtLeast(const QString &version, int expectedMajor, int expectedMinor)
+{
+    bool majorOk = false;
+    bool minorOk = false;
+    const int major = version.section(QLatin1Char('.'), 0, 0).toInt(&majorOk);
+    const int minor = version.section(QLatin1Char('.'), 1, 1).toInt(&minorOk);
+    if (!majorOk || !minorOk) {
+        return false;
+    }
+    return major > expectedMajor || (major == expectedMajor && minor >= expectedMinor);
+}
+
 } // namespace
 
 PhpBuildController::PhpBuildController(QObject *parent)
@@ -477,8 +489,11 @@ void PhpBuildController::beginPeclDownload(const QString &extension)
     QUrl packageUrl;
     QString sourceDirectoryName;
     if (extension == QStringLiteral("igbinary")) {
-        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/igbinary-3.2.16.tgz"));
-        sourceDirectoryName = QStringLiteral("igbinary-3.2.16");
+        const QString igbinaryVersion = phpVersionAtLeast(m_request.version, 8, 5)
+            ? QStringLiteral("3.2.17RC1")
+            : QStringLiteral("3.2.16");
+        packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/igbinary-%1.tgz").arg(igbinaryVersion));
+        sourceDirectoryName = QStringLiteral("igbinary-%1").arg(igbinaryVersion);
     } else if (extension == QStringLiteral("amqp")) {
         packageUrl = QUrl(QStringLiteral("https://pecl.php.net/get/amqp-2.2.0.tgz"));
         sourceDirectoryName = QStringLiteral("amqp-2.2.0");

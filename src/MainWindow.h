@@ -2,6 +2,7 @@
 
 #include "GoInstallController.h"
 #include "PhpBuildController.h"
+#include "PhpVersionCatalog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -10,6 +11,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTextEdit>
@@ -46,6 +49,8 @@ private slots:
     void refreshToolStatus();
     void showVersionContextMenu(const QPoint &position);
     void showGoVersionContextMenu(const QPoint &position);
+    void refreshPhpVersionsFromNetwork();
+    void onPhpVersionsReplyFinished();
 
 private:
     struct ModuleOption {
@@ -91,6 +96,7 @@ private:
     QPushButton *m_setVersionDefaultButton = nullptr;
     QPushButton *m_removeVersionButton = nullptr;
     QPushButton *m_fixPathButton = nullptr;
+    QPushButton *m_refreshPhpVersionsButton = nullptr;
     QPushButton *m_cancelButton = nullptr;
     QComboBox *m_buildProfileCombo = nullptr;
     QLabel *m_composerStatusLabel = nullptr;
@@ -103,6 +109,9 @@ private:
     QTextEdit *m_logEdit = nullptr;
     QList<ModuleOption> m_modules;
     PhpBuildController m_controller;
+    QNetworkAccessManager m_phpVersionsNetwork;
+    QNetworkReply *m_phpVersionsReply = nullptr;
+    QList<PhpChannel> m_phpChannels;
     QString m_currentDefaultBinPath;
 
     QComboBox *m_goInstallTargetCombo = nullptr;
